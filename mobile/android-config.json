@@ -1,0 +1,23 @@
+{
+  "project_type": "android",
+  "package_name": "com.familyconnect.app",
+  "version_name": "1.0.0",
+  "version_code": 1,
+  "signing_config": {
+    "store_file": "familyconnect.keystore",
+    "store_password": "${ANDROID_STORE_PASSWORD}",
+    "key_alias": "familyconnect",
+    "key_password": "${ANDROID_KEY_PASSWORD}"
+  },
+  "build_optimization": {
+    "minify_enabled": true,
+    "shrink_resources": true,
+    "proguard_files": ["proguard-android-optimize.txt", "proguard-rules.pro"]
+  },
+  "permissions": [
+    "android.permission.INTERNET",
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.VIBRATE"
+  ]
+}

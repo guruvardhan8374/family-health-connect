@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-socketio
+django # Needed to access Django ORM
+requests
+python-decouple
+google-generativeai

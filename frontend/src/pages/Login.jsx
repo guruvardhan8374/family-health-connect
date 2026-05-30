@@ -54,7 +54,9 @@ export default function Login() {
         url: err.config?.url
       });
       if (!err.response) {
-        setError('Cannot connect to server. Please ensure the Django backend is running at http://127.0.0.1:8000');
+        // Find the API base URL being used
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+        setError(`Cannot connect to server. Please ensure the Django backend is running at ${apiBaseUrl}`);
       } else {
         setError('Invalid username or password. Please check your credentials.');
       }

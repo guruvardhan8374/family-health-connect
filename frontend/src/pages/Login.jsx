@@ -21,6 +21,13 @@ export default function Login() {
         const user = await getGoogleRedirectResult();
         if (user) {
           console.log("Google Redirect User:", user);
+          // Get Firebase ID token and store it so ProtectedRoute allows access
+          const idToken = await user.getIdToken();
+          localStorage.setItem('access_token', idToken);
+          localStorage.setItem('refresh_token', idToken); // Firebase tokens don't expire quickly
+          localStorage.setItem('username', user.displayName || user.email?.split('@')[0] || 'User');
+          localStorage.setItem('user_id', user.uid);
+          localStorage.setItem('auth_provider', 'google');
           navigate('/');
         }
       } catch (err) {

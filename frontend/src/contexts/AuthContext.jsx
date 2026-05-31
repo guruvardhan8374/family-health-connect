@@ -13,12 +13,29 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
+
+    // If signed in via Google/Firebase, skip Django API validation
+    // and build the user object directly from localStorage
+    const authProvider = localStorage.getItem('auth_provider');
+    if (authProvider === 'google') {
+      setUser({
+        username: localStorage.getItem('username') || 'User',
+        user_id: localStorage.getItem('user_id'),
+        email: localStorage.getItem('username'),
+        auth_provider: 'google',
+      });
+      setLoading(false);
+      return;
+    }
+
+    // Django JWT users — validate against backend
     try {
       const res = await api.get('/users/profile/');
       setUser(res.data);
     } catch {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
+      localStorage.removeItem('auth_provider');
     } finally {
       setLoading(false);
     }

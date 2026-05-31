@@ -1,10 +1,5 @@
 import { initializeApp } from "firebase/app";
-import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithRedirect,
-  getRedirectResult,
-} from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 
 // Firebase project config (values injected from environment variables)
 const firebaseConfig = {
@@ -21,36 +16,15 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 /**
- * Initiates Google Sign-In using redirect flow.
- * The user is redirected to Google's sign-in page.
- * After authentication, Google redirects back to the app.
- * Call getGoogleRedirectResult() on the landing page to retrieve the user.
+ * Signs in with Google using a popup window.
+ * Returns the Firebase User object on success.
  */
 export const signInWithGoogle = async () => {
   try {
-    await signInWithRedirect(auth, googleProvider);
-    // NOTE: After this line the browser navigates away.
-    // The user result is retrieved in getGoogleRedirectResult().
+    const result = await signInWithPopup(auth, googleProvider);
+    return result.user;
   } catch (error) {
-    console.error("Firebase Redirect Error:", error);
-    throw error;
-  }
-};
-
-/**
- * Call this once on the login page mount to capture
- * the result after Google redirects the user back.
- * Returns the Firebase User object or null if no redirect happened.
- */
-export const getGoogleRedirectResult = async () => {
-  try {
-    const result = await getRedirectResult(auth);
-    if (result) {
-      return result.user;
-    }
-    return null;
-  } catch (error) {
-    console.error("Firebase Redirect Result Error:", error);
+    console.error("Firebase Login Error:", error);
     throw error;
   }
 };

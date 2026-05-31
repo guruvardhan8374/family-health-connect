@@ -1,54 +1,43 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { HeartPulse, Mail, Lock, ArrowRight, Loader2, Fingerprint } from 'lucide-react';
 import api from '../utils/api';
-import { signInWithGoogle, getGoogleRedirectResult } from '../utils/firebase';
+import { signInWithGoogle } from '../utils/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(true);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const { login } = useAuth();
 
-  // On page load, check if Google redirected back with a signed-in user
-  useEffect(() => {
-    const handleRedirectResult = async () => {
-      try {
-        const user = await getGoogleRedirectResult();
-        if (user) {
-          console.log("Google Redirect User:", user);
-          // Get Firebase ID token and store it so ProtectedRoute allows access
-          const idToken = await user.getIdToken();
-          localStorage.setItem('access_token', idToken);
-          localStorage.setItem('refresh_token', idToken); // Firebase tokens don't expire quickly
-          localStorage.setItem('username', user.displayName || user.email?.split('@')[0] || 'User');
-          localStorage.setItem('user_id', user.uid);
-          localStorage.setItem('auth_provider', 'google');
-          navigate('/');
-        }
-      } catch (err) {
-        console.error(err);
-        setError(`Google Sign-In failed: ${err.message || 'Unknown error'}`);
-      } finally {
-        setGoogleLoading(false);
-      }
-    };
-    handleRedirectResult();
-  }, [navigate]);
-
   const handleGoogleLogin = async () => {
+    setGoogleLoading(true);
+    setError('');
     try {
-      setError('');
-      // This redirects the browser to Google — the result is
-      // handled in the useEffect above when the page reloads.
-      await signInWithGoogle();
+      // signInWithPopup opens a Google sign-in window and returns the user directly
+      const user = await signInWithGoogle();
+      console.log("Google User:", user);
+
+      // Get Firebase ID token and store everything in localStorage
+      const idToken = await user.getIdToken();
+      localStorage.setItem('access_token', idToken);
+      localStorage.setItem('refresh_token', idToken);
+      localStorage.setItem('username', user.displayName || user.email?.split('@')[0] || 'User');
+      localStorage.setItem('user_id', user.uid);
+      localStorage.setItem('auth_provider', 'google');
+
+      // Navigate to dashboard — AuthContext will see auth_provider=google
+      // and skip Django API validation, keeping the user logged in
+      navigate('/');
     } catch (err) {
       console.error(err);
       setError(`Google Sign-In failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setGoogleLoading(false);
     }
   };
 

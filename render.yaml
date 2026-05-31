@@ -3,6 +3,7 @@ services:
   - type: web
     name: family-health-connect-backend
     runtime: python
+    plan: free
     buildCommand: |
       cd familyconnect
       pip install -r requirements.txt
@@ -20,20 +21,10 @@ services:
         fromDatabase:
           name: familyconnect-db
           property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: familyconnect-redis
-          property: connectionString
       - key: ALLOWED_HOSTS
         value: "*"
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://family-health-connect-frontend.vercel.app" # Change to actual frontend domain
-
-  # Redis for Django Channels layer
-  - type: redis
-    name: familyconnect-redis
-    ipAllowList: [] # Access only from services in the same account
+        value: "https://family-health-connect-7mwd.vercel.app"
 
 databases:
   # PostgreSQL database for production

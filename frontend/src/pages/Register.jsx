@@ -20,11 +20,31 @@ export default function Register() {
     setLoading(true);
     setError('');
     try {
-      await api.post('/users/register/', formData);
+      const registrationData = {
+        ...formData,
+        password_confirm: formData.password
+      };
+      await api.post('/users/register/', registrationData);
       // Redirect to OTP verification after registration
       navigate('/verify-otp', { state: { email: formData.email } });
     } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed. Please check your details.');
+      let errorMsg = 'Registration failed. Please check your details.';
+      if (err.response?.data) {
+        const data = err.response.data;
+        if (data.message) {
+          errorMsg = data.message;
+        } else if (typeof data === 'object') {
+          const errors = Object.entries(data).map(([field, msgs]) => {
+            const fieldName = field.charAt(0).toUpperCase() + field.slice(1).replace('_', ' ');
+            const messages = Array.isArray(msgs) ? msgs.join(' ') : msgs;
+            return `${fieldName}: ${messages}`;
+          });
+          if (errors.length > 0) {
+            errorMsg = errors.join(' | ');
+          }
+        }
+      }
+      setError(errorMsg);
     } finally {
       setLoading(false);
     }

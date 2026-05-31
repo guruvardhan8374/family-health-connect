@@ -15,9 +15,6 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    // Bypass warning screens for tunnel services like localtunnel and ngrok
-    config.headers['Bypass-Tunnel-Reminder'] = 'true';
-    config.headers['ngrok-skip-browser-warning'] = 'true';
     return config;
   },
   (error) => Promise.reject(error)

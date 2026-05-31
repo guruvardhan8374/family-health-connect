@@ -24,7 +24,15 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    if (error.response.status === 401 && !originalRequest._retry) {
+
+    // If this is a Google/Firebase auth user, don't try Django token refresh
+    // and don't force logout — just let the error pass through
+    const authProvider = localStorage.getItem('auth_provider');
+    if (authProvider === 'google') {
+      return Promise.reject(error);
+    }
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       const refreshToken = localStorage.getItem('refresh_token');
       if (refreshToken) {

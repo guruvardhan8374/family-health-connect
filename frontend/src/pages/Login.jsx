@@ -1,25 +1,44 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { HeartPulse, Mail, Lock, ArrowRight, Loader2, Fingerprint } from 'lucide-react';
 import api from '../utils/api';
-import { signInWithGoogle } from '../utils/firebase';
+import { signInWithGoogle, getGoogleRedirectResult } from '../utils/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(true);
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const { login } = useAuth();
 
+  // On page load, check if Google redirected back with a signed-in user
+  useEffect(() => {
+    const handleRedirectResult = async () => {
+      try {
+        const user = await getGoogleRedirectResult();
+        if (user) {
+          console.log("Google Redirect User:", user);
+          navigate('/');
+        }
+      } catch (err) {
+        console.error(err);
+        setError(`Google Sign-In failed: ${err.message || 'Unknown error'}`);
+      } finally {
+        setGoogleLoading(false);
+      }
+    };
+    handleRedirectResult();
+  }, [navigate]);
+
   const handleGoogleLogin = async () => {
     try {
-      const user = await signInWithGoogle();
-      console.log("Google User:", user);
-      // In a real app, send the user's ID token to your backend
-      // to create/login the user and get a JWT.
-      navigate('/');
+      setError('');
+      // This redirects the browser to Google — the result is
+      // handled in the useEffect above when the page reloads.
+      await signInWithGoogle();
     } catch (err) {
       console.error(err);
       setError(`Google Sign-In failed: ${err.message || 'Unknown error'}`);

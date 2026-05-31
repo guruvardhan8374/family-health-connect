@@ -21,7 +21,8 @@ export default function Login() {
       // to create/login the user and get a JWT.
       navigate('/');
     } catch (err) {
-      setError('Google Sign-In failed.');
+      console.error(err);
+      setError(`Google Sign-In failed: ${err.message || 'Unknown error'}`);
     }
   };
 

@@ -6,6 +6,10 @@ from django.utils import timezone
 from django_ratelimit.decorators import ratelimit
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.utils.decorators import method_decorator
+from rest_framework_simplejwt.tokens import RefreshToken
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .models import CustomUser, LocationHistory, UserSettings
 from .serializers import (
@@ -160,3 +164,85 @@ class LocationHistoryViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+
+class SendPhoneOTPView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    @method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True))
+    def post(self, request):
+        phone_number = request.data.get('phone_number')
+        role = request.data.get('role', 'MEMBER')
+        
+        if not phone_number:
+            return Response({"error": "Phone number is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Clean phone number (digits only)
+        phone_number = ''.join(filter(str.isdigit, str(phone_number)))
+        if not phone_number:
+            return Response({"error": "Invalid phone number"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = CustomUser.objects.get(phone_number=phone_number)
+        except CustomUser.DoesNotExist:
+            # Create a new user automatically
+            username = f"phone_{phone_number}"
+            email = f"phone_{phone_number}@familyhealth.com"
+            password = CustomUser.objects.make_random_password()
+            user = CustomUser.objects.create_user(
+                username=username,
+                email=email,
+                phone_number=phone_number,
+                password=password,
+                role=role if role in [r[0] for r in CustomUser.ROLE_CHOICES] else 'MEMBER'
+            )
+            # Initialize default user settings
+            UserSettings.objects.get_or_create(user=user)
+
+        # Generate and save OTP
+        otp_code = generate_otp()
+        user.otp_code = otp_code
+        user.otp_created_at = timezone.now()
+        user.save()
+
+        # Send OTP (Log to console)
+        from .services import send_otp_sms
+        send_success = send_otp_sms(f"+{phone_number}", otp_code)
+        
+        logger.info(f"Sending Phone OTP to {phone_number}: {otp_code}")
+        
+        if not send_success:
+             return Response({"error": "Failed to send SMS OTP"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({"message": "OTP sent successfully"}, status=status.HTTP_200_OK)
+
+
+class VerifyPhoneOTPView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
+    def post(self, request):
+        phone_number = request.data.get('phone_number')
+        otp = request.data.get('otp')
+
+        if not phone_number or not otp:
+            return Response({"error": "Phone number and OTP are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Clean phone number
+        phone_number = ''.join(filter(str.isdigit, str(phone_number)))
+        
+        try:
+            user = CustomUser.objects.get(phone_number=phone_number)
+            if verify_otp(user, otp):
+                # Generate SimpleJWT tokens
+                refresh = RefreshToken.for_user(user)
+                return Response({
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                    "user_id": user.id,
+                    "username": user.username,
+                    "role": user.role
+                }, status=status.HTTP_200_OK)
+            return Response({"error": "Invalid or expired OTP"}, status=status.HTTP_400_BAD_REQUEST)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User with this phone number does not exist"}, status=status.HTTP_400_BAD_REQUEST)

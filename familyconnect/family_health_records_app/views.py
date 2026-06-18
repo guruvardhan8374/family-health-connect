@@ -118,4 +118,4 @@ class HealthRecordViewSet(viewsets.ModelViewSet):
         records = HealthRecord.objects.filter(user=target_user, recorded_date__gte=fifteen_days_ago).order_by('recorded_date')
         
         serializer = self.get_serializer(records, many=True)
-        return Response(serializer.data)
+        return Response(serializer.data)    

@@ -107,7 +107,7 @@ def detect_anomalies(user):
     return anomalies
 
 from django.conf import settings
-import google.generativeai as genai
+from google import genai
 
 def generate_health_suggestions(user):
     """
@@ -152,9 +152,11 @@ def generate_health_suggestions(user):
                 "Output each suggestion as a single plain-text line starting with a bullet (-). No header or extra intro text."
             )
             
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            model = genai.GenerativeModel('gemini-pro')
-            response = model.generate_content(prompt)
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
             text = response.text.strip()
             
             # Parse lines starting with '-' or '*'

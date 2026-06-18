@@ -30,6 +30,38 @@ def send_otp_email(email, otp_code):
     # Return True indicating successfully queued/sent in mock fashion
     return True
 
+def send_otp_sms(phone_number, otp_code):
+    """
+    Sends the OTP code via SMS using Twilio.
+    Falls back to console logging if Twilio is not configured.
+    """
+    from django.conf import settings
+    
+    message_body = f"Your Family Health Connect verification code is: {otp_code}. It will expire in 10 minutes."
+    
+    if getattr(settings, 'TWILIO_ACCOUNT_SID', None) and getattr(settings, 'TWILIO_AUTH_TOKEN', None) and getattr(settings, 'TWILIO_PHONE_NUMBER', None):
+        try:
+            from twilio.rest import Client
+            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+            message = client.messages.create(
+                body=message_body,
+                from_=settings.TWILIO_PHONE_NUMBER,
+                to=phone_number
+            )
+            logger.info(f"Twilio SMS sent to {phone_number}, SID: {message.sid}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send Twilio SMS to {phone_number}: {str(e)}")
+            return False
+    else:
+        # Fallback to console logging
+        logger.info(f"Sending OTP via SMS to {phone_number}: {message_body}")
+        print(f"\n=======================================================")
+        print(f"SMS TO: {phone_number}")
+        print(f"MESSAGE: {message_body}")
+        print(f"=======================================================\n")
+        return True
+
 def verify_otp(user, otp_code):
     """
     Verifies the OTP code for a user, checking for correct match and expiration (10 minutes).

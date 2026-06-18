@@ -6,7 +6,8 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.utils import timezone
 from django.conf import settings
 from django.db.models import Max
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import os
 
 from .models import Conversation, Message, UserConversation, Story
@@ -171,27 +172,30 @@ class AIAssistantView(APIView):
             return self.get_rule_based_response(prompt, context_type)
 
         try:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            model = genai.GenerativeModel('gemini-pro')
-            
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
             system_instruction = "You are a helpful family health assistant. "
             if context_type == 'HEALTH':
                 system_instruction += "Analyze the following health data and provide a concise, reassuring summary for family members. Do not give medical advice, but highlight if values are outside normal ranges."
             else:
                 system_instruction += "Summarize the family conversation and highlight key action items or updates."
 
-            response = model.generate_content(f"{system_instruction}\n\nUser Input: {prompt}")
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=f"{system_instruction}\n\nUser Input: {prompt}"
+            )
             return Response({'analysis': response.text}, status=status.HTTP_200_OK)
         except Exception as e:
             # On Google API or client failures, transparently fallback to rule-based insights
             return self.get_rule_based_response(prompt, context_type, api_error=str(e))
 
     def get_rule_based_response(self, prompt, context_type, api_error=None):
-        try:
-            model = genai.GenerativeModel("gemini-2.5-flash")
+        if settings.GEMINI_API_KEY:
+            try:
+                client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-            if context_type == 'HEALTH':
-                full_prompt = f"""
+                if context_type == 'HEALTH':
+                    full_prompt = f"""
 You are an intelligent AI assistant for Family Health Connect.
 
 Rules:
@@ -203,8 +207,8 @@ Rules:
 User question:
 {prompt}
 """
-            else:
-                full_prompt = f"""
+                else:
+                    full_prompt = f"""
 You are an intelligent AI assistant.
 
 Rules:
@@ -218,23 +222,57 @@ User question:
 {prompt}
 """
 
-            response = model.generate_content(full_prompt)
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=full_prompt
+                )
 
-            return Response(
-                {
-                    'analysis': response.text,
-                    'fallback': False,
-                    'api_error': None
-                },
-                status=status.HTTP_200_OK
-            )
+                return Response(
+                    {
+                        'analysis': response.text,
+                        'fallback': False,
+                        'api_error': None
+                    },
+                    status=status.HTTP_200_OK
+                )
+            except Exception as e:
+                api_error = str(e)
 
-        except Exception as e:
-            return Response(
-                {
-                    'analysis': f"Gemini AI Error: {str(e)}",
-                    'fallback': True,
-                    'api_error': str(e)
-                },
-                status=status.HTTP_200_OK
-            )
+        # Local rule-based/heuristic fallback if API key is empty/invalid or Gemini API calls fail
+        import re
+        prompt_lower = prompt.lower()
+        
+        def has_word(keywords):
+            return any(re.search(r'\b' + re.escape(kw), prompt_lower) for kw in keywords)
+
+        if context_type == 'HEALTH':
+            if has_word(['sleep', 'insomnia', 'tired', 'wake', 'bed']):
+                analysis = "Aim for 7-8 hours of quality sleep tonight. Try keeping a regular sleep schedule, avoiding screens before bed, and keeping your room quiet and dark."
+            elif has_word(['water', 'hydrate', 'hydration', 'drink', 'thirsty']):
+                analysis = "Aim to drink at least 8-10 glasses (about 2-2.5 liters) of water daily to stay hydrated and support energy levels."
+            elif has_word(['exercise', 'step', 'walk', 'run', 'activity', 'fit', 'sport']):
+                analysis = "Try incorporating at least 30 minutes of moderate exercise, such as brisk walking, most days of the week to support cardiovascular health."
+            elif has_word(['diet', 'food', 'eat', 'nutrition', 'weight', 'bmi', 'calorie']):
+                analysis = "Maintain a balanced diet rich in vegetables, fruits, lean proteins, and whole grains, while limiting processed foods, sugar, and excess salt."
+            elif has_word(['heart', 'bp', 'blood pressure', 'pulse', 'vital']):
+                analysis = "A normal resting heart rate is typically 60-100 bpm, and blood pressure should ideally be below 120/80 mmHg. Consult a doctor for persistent variations."
+            elif has_word(['stress', 'anxious', 'calm', 'relax', 'mental']):
+                analysis = "Manage stress through deep breathing exercises, mindfulness, light exercise, and connecting with family. Seek professional support if needed."
+            else:
+                analysis = "I'm monitoring your family's health queries. You can ask me about sleep, hydration, exercise, diet, heart rate, or stress management."
+        else:
+            if has_word(['hi', 'hello', 'hey', 'greetings']):
+                analysis = "Hello! I am your Family Health AI Assistant. How can I help you and your family today?"
+            elif has_word(['summary', 'conversation', 'chat', 'discuss']):
+                analysis = "Based on the recent family conversation, everyone seems to be staying active. Keep sharing updates and supporting each other!"
+            else:
+                analysis = "I am your Family Health Assistant. I can help you summarize family health updates or answer questions about wellness and vitals."
+
+        return Response(
+            {
+                'analysis': analysis,
+                'fallback': True,
+                'api_error': api_error
+            },
+            status=status.HTTP_200_OK
+        )

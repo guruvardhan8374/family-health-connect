@@ -223,6 +223,11 @@ GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 print("GEMINI KEY =", GEMINI_API_KEY)
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
 
+# ─── Twilio SMS Configuration ───────────────────────────────
+TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
+TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
+TWILIO_PHONE_NUMBER = config('TWILIO_PHONE_NUMBER', default='')
+
 # ─── Sentry (optional) ───────────────────────────────────────
 SENTRY_DSN = config('SENTRY_DSN', default='')
 if SENTRY_DSN:

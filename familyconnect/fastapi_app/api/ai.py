@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 import os
-import google.generativeai as genai
+from google import genai
 from health.models import HealthMetric
 from decouple import config
 
@@ -17,9 +17,9 @@ class ChatResponse(BaseModel):
 
 # Configure Gemini
 GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
+client = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
 @router.post("/ai/suggest", response_model=ChatResponse)
 async def get_ai_suggestions(request: ChatRequest):
@@ -44,9 +44,12 @@ async def get_ai_suggestions(request: ChatRequest):
     response_text = ""
     suggestions = []
 
-    if GEMINI_API_KEY:
+    if GEMINI_API_KEY and client:
         try:
-            gemini_response = model.generate_content(prompt)
+            gemini_response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
             response_text = gemini_response.text
             suggestions = ["View health trends", "Log new vitals", "Family overview"]
         except Exception as e:

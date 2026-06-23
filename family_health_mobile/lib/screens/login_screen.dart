@@ -31,8 +31,6 @@ class _LoginScreenState extends State<LoginScreen>
   String? _phoneError;
   String? _phoneSuccess;
   bool _otpSent = false; // false = enter phone, true = enter OTP
-  String? _phoneSuccess;
-  bool _otpSent = false; // false = enter phone, true = enter OTP
   
   Timer? _resendTimer;
   int _resendCountdown = 0;

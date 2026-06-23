@@ -363,6 +363,26 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>?> createFamilyGroup(String name, String description) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/family/groups/'),
+        headers: headers,
+        body: jsonEncode({
+          'name': name,
+          'description': description,
+        }),
+      );
+      if (response.statusCode == 201) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   static Future<Map<String, dynamic>?> register({
     required String username,
     required String email,

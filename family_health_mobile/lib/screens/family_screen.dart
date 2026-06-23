@@ -47,8 +47,10 @@ class _FamilyScreenState extends State<FamilyScreen> {
 
     final emailController = TextEditingController();
     final codeController = TextEditingController();
+    final nameController = TextEditingController();
+    final descController = TextEditingController();
     String label = 'OTHER';
-    bool isInvite = true;
+    String mode = groups.isEmpty ? 'create' : 'invite'; // Default to create if no groups exist
     bool dialogSaving = false;
 
     if (!mounted) return;
@@ -62,7 +64,9 @@ class _FamilyScreenState extends State<FamilyScreen> {
           return AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             title: Text(
-              isInvite ? 'Invite Family Member' : 'Join Family Group',
+              mode == 'invite' 
+                  ? 'Invite Family Member' 
+                  : (mode == 'join' ? 'Join Family Group' : 'Create Family Circle'),
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             content: SingleChildScrollView(
@@ -72,29 +76,52 @@ class _FamilyScreenState extends State<FamilyScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      ChoiceChip(
-                        label: const Text('Invite Member'),
-                        selected: isInvite,
-                        selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
-                        onSelected: (val) {
-                          setStateDialog(() => isInvite = true);
-                        },
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                          child: ChoiceChip(
+                            label: const Text('Invite', style: TextStyle(fontSize: 12)),
+                            selected: mode == 'invite',
+                            selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
+                            onSelected: (val) {
+                              if (val) setStateDialog(() => mode = 'invite');
+                            },
+                          ),
+                        ),
                       ),
-                      ChoiceChip(
-                        label: const Text('Join Group'),
-                        selected: !isInvite,
-                        selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
-                        onSelected: (val) {
-                          setStateDialog(() => isInvite = false);
-                        },
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                          child: ChoiceChip(
+                            label: const Text('Join', style: TextStyle(fontSize: 12)),
+                            selected: mode == 'join',
+                            selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
+                            onSelected: (val) {
+                              if (val) setStateDialog(() => mode = 'join');
+                            },
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                          child: ChoiceChip(
+                            label: const Text('Create', style: TextStyle(fontSize: 12)),
+                            selected: mode == 'create',
+                            selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
+                            onSelected: (val) {
+                              if (val) setStateDialog(() => mode = 'create');
+                            },
+                          ),
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 16),
-                  if (isInvite) ...[
+                  if (mode == 'invite') ...[
                     if (groups.isEmpty)
                       const Text(
-                        'You do not manage any family groups. Please create a family group on the dashboard first.',
+                        'You do not manage any family groups. Please create a family group first using the Create tab above.',
                         style: TextStyle(color: Colors.red, fontSize: 13),
                         textAlign: TextAlign.center,
                       )
@@ -111,7 +138,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
-                        initialValue: label,
+                        value: label,
                         decoration: InputDecoration(
                           labelText: 'Relationship Label',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -127,7 +154,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                         onChanged: (val) => setStateDialog(() => label = val!),
                       ),
                     ]
-                  ] else ...[
+                  ] else if (mode == 'join') ...[
                     TextField(
                       controller: codeController,
                       style: TextStyle(color: dialogDark ? Colors.white : const Color(0xFF0F172A)),
@@ -139,7 +166,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
-                      initialValue: label,
+                      value: label,
                       decoration: InputDecoration(
                         labelText: 'Your Role Label',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -154,6 +181,26 @@ class _FamilyScreenState extends State<FamilyScreen> {
                       ],
                       onChanged: (val) => setStateDialog(() => label = val!),
                     ),
+                  ] else ...[
+                    TextField(
+                      controller: nameController,
+                      style: TextStyle(color: dialogDark ? Colors.white : const Color(0xFF0F172A)),
+                      decoration: InputDecoration(
+                        labelText: 'Circle Name',
+                        prefixIcon: const Icon(Icons.people_outline, color: Color(0xFF14B8A6)),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: descController,
+                      style: TextStyle(color: dialogDark ? Colors.white : const Color(0xFF0F172A)),
+                      decoration: InputDecoration(
+                        labelText: 'Description (Optional)',
+                        prefixIcon: const Icon(Icons.description_outlined, color: Color(0xFF14B8A6)),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -163,7 +210,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('Cancel', style: TextStyle(color: Color(0xFF64748B))),
               ),
-              if (!isInvite || groups.isNotEmpty)
+              if (mode != 'invite' || groups.isNotEmpty)
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF14B8A6),
@@ -176,7 +223,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                           bool success = false;
                           String msg = '';
 
-                          if (isInvite) {
+                          if (mode == 'invite') {
                             final email = emailController.text.trim();
                             if (email.isEmpty) {
                               setStateDialog(() => dialogSaving = false);
@@ -186,7 +233,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                             final res = await ApiService.inviteFamilyMember(groupId, email, label);
                             success = res != null;
                             msg = success ? 'Invitation sent to $email!' : 'Failed to send invitation.';
-                          } else {
+                          } else if (mode == 'join') {
                             final code = codeController.text.trim();
                             if (code.isEmpty) {
                               setStateDialog(() => dialogSaving = false);
@@ -195,6 +242,16 @@ class _FamilyScreenState extends State<FamilyScreen> {
                             final res = await ApiService.joinFamilyByCode(code, label);
                             success = res != null;
                             msg = success ? (res['message'] ?? 'Request to join group submitted!') : 'Failed to join group.';
+                          } else {
+                            final name = nameController.text.trim();
+                            if (name.isEmpty) {
+                              setStateDialog(() => dialogSaving = false);
+                              return;
+                            }
+                            final desc = descController.text.trim();
+                            final res = await ApiService.createFamilyGroup(name, desc);
+                            success = res != null;
+                            msg = success ? 'Family Circle "$name" created successfully!' : 'Failed to create Family Circle.';
                           }
 
                           if (ctx.mounted) {
@@ -211,7 +268,12 @@ class _FamilyScreenState extends State<FamilyScreen> {
                         },
                   child: dialogSaving
                       ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : Text(isInvite ? 'Send Invite' : 'Join Group', style: const TextStyle(color: Colors.white)),
+                      : Text(
+                          mode == 'invite' 
+                              ? 'Send Invite' 
+                              : (mode == 'join' ? 'Join Group' : 'Create Circle'), 
+                          style: const TextStyle(color: Colors.white),
+                        ),
                 ),
             ],
           );
@@ -219,6 +281,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
       ),
     );
   }
+
 
   @override
   Widget build(BuildContext context) {

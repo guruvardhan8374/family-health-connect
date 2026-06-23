@@ -103,6 +103,21 @@ export default function FamilyDirectory() {
 
   // --- API SUBMISSIONS ---
 
+  const getErrorMessage = (err, defaultMsg) => {
+    if (err.response?.data) {
+      const data = err.response.data;
+      if (typeof data === 'string') return data;
+      if (data.detail) return data.detail;
+      if (data.error) return data.error;
+      const firstFieldErr = Object.keys(data).map(key => {
+        const val = data[key];
+        return `${key}: ${Array.isArray(val) ? val.join(', ') : val}`;
+      })[0];
+      if (firstFieldErr) return firstFieldErr;
+    }
+    return err.message || defaultMsg;
+  };
+
   const handleCreateGroup = async (e) => {
     e.preventDefault();
     if (!newGroupName.trim()) return;
@@ -119,7 +134,7 @@ export default function FamilyDirectory() {
       alert("Family Circle created successfully!");
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.error || "Failed to create Family Circle");
+      alert(getErrorMessage(err, "Failed to create Family Circle"));
     } finally {
       setLoading(false);
     }
@@ -141,7 +156,7 @@ export default function FamilyDirectory() {
       alert(res.data.message || "Request submitted successfully!");
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.error || "Invalid family code or failed to submit request");
+      alert(getErrorMessage(err, "Invalid family code or failed to submit request"));
     } finally {
       setLoading(false);
     }
@@ -163,7 +178,7 @@ export default function FamilyDirectory() {
       alert(`Invitation sent successfully to ${inviteEmail}!`);
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.error || "Failed to send invitation");
+      alert(getErrorMessage(err, "Failed to send invitation"));
     } finally {
       setLoading(false);
     }
@@ -177,7 +192,7 @@ export default function FamilyDirectory() {
       alert("Membership approved successfully!");
     } catch (err) {
       console.error(err);
-      alert("Failed to approve membership");
+      alert(getErrorMessage(err, "Failed to approve membership"));
     }
   };
 
@@ -189,7 +204,7 @@ export default function FamilyDirectory() {
       alert("Membership request rejected.");
     } catch (err) {
       console.error(err);
-      alert("Failed to reject request");
+      alert(getErrorMessage(err, "Failed to reject request"));
     }
   };
 
@@ -202,7 +217,7 @@ export default function FamilyDirectory() {
       alert("Member promoted to Admin!");
     } catch (err) {
       console.error(err);
-      alert("Failed to promote member");
+      alert(getErrorMessage(err, "Failed to promote member"));
     }
   };
 
@@ -215,9 +230,10 @@ export default function FamilyDirectory() {
       alert("Member demoted successfully.");
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.error || "Failed to demote member");
+      alert(getErrorMessage(err, "Failed to demote member"));
     }
   };
+
 
   const handleUpdateRole = async (membershipId) => {
     const newRole = window.prompt(

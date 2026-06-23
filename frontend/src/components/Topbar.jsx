@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Bell, Search, UserCircle, LogOut, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Topbar() {
   const [notifications, setNotifications] = useState([]);
@@ -9,17 +10,22 @@ export default function Topbar() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
+  const displayName = user?.username || user?.first_name || localStorage.getItem('username') || 'User';
+  const initials = displayName.charAt(0).toUpperCase();
 
   useEffect(() => {
     const fetchNotifications = async () => {
       try {
-        const res = await api.get('/users/notifications/unread_count/');
-        setUnreadCount(res.data.unread_count);
+        // Correct path: /api/v1/notifications/unread-count/ (not /users/notifications/)
+        const res = await api.get('/notifications/unread-count/');
+        setUnreadCount(res.data.unread_count || 0);
         
-        const listRes = await api.get('/users/notifications/');
-        setNotifications(listRes.data.slice(0, 5));
+        const listRes = await api.get('/notifications/');
+        const data = listRes.data;
+        setNotifications((Array.isArray(data) ? data : data.results || []).slice(0, 5));
       } catch (err) {
-        console.error('Failed to fetch notifications');
+        // Silently ignore notification fetch errors
       }
     };
     fetchNotifications();
@@ -28,9 +34,7 @@ export default function Topbar() {
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    navigate('/login');
+    logout();
   };
 
   return (
@@ -96,11 +100,11 @@ export default function Topbar() {
             className="flex items-center space-x-2 pl-4 border-l border-navy-100 hover:opacity-80 transition-all"
           >
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-500 to-brand-400 flex items-center justify-center text-white font-bold shadow-md shadow-brand-500/20">
-              P
+              {initials}
             </div>
             <div className="text-left hidden sm:block">
-              <p className="text-sm font-bold text-navy-900 leading-none">Pravi</p>
-              <p className="text-[10px] text-navy-400 mt-1 uppercase font-bold tracking-wider">Family Head</p>
+              <p className="text-sm font-bold text-navy-900 leading-none">{displayName}</p>
+              <p className="text-[10px] text-navy-400 mt-1 uppercase font-bold tracking-wider">{user?.role || 'Member'}</p>
             </div>
             <ChevronDown className="w-4 h-4 text-navy-400" />
           </button>

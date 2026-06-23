@@ -104,6 +104,8 @@ export default function FamilyDirectory() {
   // --- API SUBMISSIONS ---
 
   const getErrorMessage = (err, defaultMsg) => {
+    // If 401, the interceptor already handles redirect to /login — suppress the alert
+    if (err.response?.status === 401) return null;
     if (err.response?.data) {
       const data = err.response.data;
       if (typeof data === 'string') return data;
@@ -134,7 +136,8 @@ export default function FamilyDirectory() {
       alert("Family Circle created successfully!");
     } catch (err) {
       console.error(err);
-      alert(getErrorMessage(err, "Failed to create Family Circle"));
+      const msg = getErrorMessage(err, "Failed to create Family Circle");
+      if (msg) alert(msg);
     } finally {
       setLoading(false);
     }

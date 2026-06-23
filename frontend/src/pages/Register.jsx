@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { HeartPulse, Mail, Lock, User, Phone, ShieldCheck, ArrowRight, Loader2 } from 'lucide-react';
 import api from '../utils/api';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Register() {
   const [formData, setFormData] = useState({
@@ -14,6 +15,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const handleRegister = async (e) => {
     e.preventDefault();
@@ -24,9 +26,21 @@ export default function Register() {
         ...formData,
         password_confirm: formData.password
       };
-      await api.post('/users/register/', registrationData);
-      // Redirect to OTP verification after registration
-      navigate('/verify-otp', { state: { email: formData.email } });
+      const res = await api.post('/users/register/', registrationData);
+      const data = res.data;
+      // If backend returns tokens (auto-verify mode), log in immediately
+      if (data.access && data.refresh) {
+        login({
+          access: data.access,
+          refresh: data.refresh,
+          username: data.username || formData.username,
+          user_id: data.user_id?.toString() || '',
+        });
+        navigate('/');
+      } else {
+        // Fallback: redirect to OTP verification
+        navigate('/verify-otp', { state: { email: formData.email } });
+      }
     } catch (err) {
       let errorMsg = 'Registration failed. Please check your details.';
       if (err.response?.data) {

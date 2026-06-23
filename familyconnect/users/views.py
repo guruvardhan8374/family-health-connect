@@ -31,22 +31,32 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         
-        # Generate OTP code
+        # Auto-verify user so they can log in immediately
+        # (OTP email is still generated for future use when SMTP is configured)
+        user.is_otp_verified = True
         otp_code = generate_otp()
         user.otp_code = otp_code
         user.otp_created_at = timezone.now()
         user.save()
         
-        # Send OTP
+        # Send OTP email (logs to console — will be real email when SMTP is configured)
         send_otp_email(user.email, otp_code)
         
         # Initialize default user settings
         UserSettings.objects.create(user=user)
         
+        # Generate JWT tokens for immediate login
+        from rest_framework_simplejwt.tokens import RefreshToken
+        refresh = RefreshToken.for_user(user)
+        
         headers = self.get_success_headers(serializer.data)
         return Response({
-            "message": "User registered successfully. Please verify using the OTP sent to your email.",
-            "user": UserSerializer(user).data
+            "message": "User registered successfully! You can now log in.",
+            "user": UserSerializer(user).data,
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user_id": user.id,
+            "username": user.username
         }, status=status.HTTP_201_CREATED, headers=headers)
 
 class SecureTokenObtainPairView(TokenObtainPairView):

@@ -16,7 +16,7 @@ services:
       - key: DEBUG
         value: "False"
       - key: SECRET_KEY
-        generateValue: true
+        value: "E3bRuu42OQrvV_Za8FNYqLNucINet5_8n8FDwRSycWCQOACXvh5DJnG0TQLi5jWtygg"
       - key: DATABASE_URL
         fromDatabase:
           name: familyconnect-db

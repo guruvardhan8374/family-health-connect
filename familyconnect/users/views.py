@@ -249,3 +249,38 @@ class VerifyPhoneOTPView(APIView):
             return Response({"error": "Invalid or expired OTP"}, status=status.HTTP_400_BAD_REQUEST)
         except CustomUser.DoesNotExist:
             return Response({"error": "User with this phone number does not exist"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+from django.db import connection
+
+class DebugDBView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    def get(self, request):
+        try:
+            with connection.cursor() as cursor:
+                # Get tables
+                cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
+                tables = [row[0] for row in cursor.fetchall()]
+                
+                # Get columns for family_familygroup
+                cursor.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'family_familygroup';")
+                group_cols = {row[0]: row[1] for row in cursor.fetchall()}
+                
+                # Get columns for family_familymembership
+                cursor.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'family_familymembership';")
+                member_cols = {row[0]: row[1] for row in cursor.fetchall()}
+                
+                # Get group count
+                cursor.execute("SELECT COUNT(*) FROM family_familygroup;")
+                group_count = cursor.fetchone()[0]
+                
+            return Response({
+                "tables": tables,
+                "family_familygroup_columns": group_cols,
+                "family_familymembership_columns": member_cols,
+                "family_group_count": group_count,
+                "status": "success"
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e), "status": "error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

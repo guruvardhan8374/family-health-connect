@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { HeartPulse, Mail, Lock, User, Phone, ShieldCheck, ArrowRight, Loader2 } from 'lucide-react';
+import { HeartPulse, Mail, Lock, User, ShieldCheck, ArrowRight, Loader2 } from 'lucide-react';
 import api from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -9,7 +9,6 @@ export default function Register() {
     username: '',
     email: '',
     password: '',
-    phone_number: '',
     role: 'MEMBER'
   });
   const [loading, setLoading] = useState(false);
@@ -120,22 +119,6 @@ export default function Register() {
                   onChange={handleChange}
                   className="w-full bg-navy-800/50 border border-white/5 rounded-2xl py-3 pl-12 pr-4 text-white placeholder-navy-500 focus:outline-none focus:ring-2 focus:ring-brand-500/50 transition-all"
                   placeholder="name@example.com"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-navy-200 ml-1">Phone Number</label>
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-navy-400 group-focus-within:text-brand-400">
-                  <Phone className="w-5 h-5" />
-                </div>
-                <input
-                  name="phone_number"
-                  required
-                  onChange={handleChange}
-                  className="w-full bg-navy-800/50 border border-white/5 rounded-2xl py-3 pl-12 pr-4 text-white placeholder-navy-500 focus:outline-none focus:ring-2 focus:ring-brand-500/50 transition-all"
-                  placeholder="+1 234 567 890"
                 />
               </div>
             </div>

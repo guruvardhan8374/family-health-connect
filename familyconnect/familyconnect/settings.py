@@ -219,6 +219,15 @@ CORS_ALLOWED_ORIGINS = config(
     cast=lambda v: [s.strip() for s in v.split(',')]
 )
 
+# ─── Email (Gmail SMTP) ──────────────────────────────────────
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = config('EMAIL_HOST_USER', default='noreply@familyhealthconnect.com')
+
 # ─── External API Keys ───────────────────────────────────────
 GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 print("GEMINI KEY =", GEMINI_API_KEY)

@@ -17,6 +17,7 @@ export default function FamilyDirectory() {
   const [allMembers, setAllMembers] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   
   // Modals & Forms
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -131,7 +132,7 @@ export default function FamilyDirectory() {
   const handleCreateGroup = async (e) => {
     e.preventDefault();
     if (!newGroupName.trim()) return;
-    setLoading(true);
+    setSubmitting(true);
     try {
       const res = await api.post('/family/groups/', {
         name: newGroupName,
@@ -142,7 +143,7 @@ export default function FamilyDirectory() {
       setNewGroupDesc('');
       setShowCreateModal(false);
       await fetchData();
-      // Show the family code in a modal
+      // Show the family code in a modal — done after fetchData so state is settled
       if (createdGroup?.family_code) {
         setNewGroupCode({ code: createdGroup.family_code, name: createdGroup.name });
         setShowCodeModal(true);
@@ -152,14 +153,14 @@ export default function FamilyDirectory() {
       const msg = getErrorMessage(err, "Failed to create Family Circle");
       if (msg) alert(msg);
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   const handleJoinByCode = async (e) => {
     e.preventDefault();
     if (!joinCode.trim()) return;
-    setLoading(true);
+    setSubmitting(true);
     try {
       const res = await api.post('/family/groups/join-by-code/', {
         family_code: joinCode.trim().toUpperCase(),
@@ -174,14 +175,14 @@ export default function FamilyDirectory() {
       console.error(err);
       alert(getErrorMessage(err, "Invalid family code or failed to submit request"));
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   const handleSendInvite = async (e) => {
     e.preventDefault();
     if (!inviteEmail.trim() || !activeGroup) return;
-    setLoading(true);
+    setSubmitting(true);
     try {
       await api.post(`/family/groups/${activeGroup.id}/invite/`, {
         email: inviteEmail.trim(),
@@ -196,7 +197,7 @@ export default function FamilyDirectory() {
       console.error(err);
       alert(getErrorMessage(err, "Failed to send invitation"));
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
@@ -345,8 +346,7 @@ export default function FamilyDirectory() {
                   />
                 </div>
                 <button type="submit" className="w-full mt-2 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-lg shadow-emerald-500/20">
-                  <span>Launch Family Circle</span>
-                  <ArrowRight className="w-5 h-5" />
+                  {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Launch Family Circle</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
             </div>
@@ -389,8 +389,7 @@ export default function FamilyDirectory() {
                   </select>
                 </div>
                 <button type="submit" className="w-full mt-2 bg-brand-500 hover:bg-brand-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-lg shadow-brand-500/20">
-                  <span>Send Join Request</span>
-                  <ArrowRight className="w-5 h-5" />
+                  {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Send Join Request</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
             </div>
@@ -783,8 +782,7 @@ export default function FamilyDirectory() {
                   </select>
                 </div>
                 <button type="submit" className="w-full bg-brand-500 hover:bg-brand-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-md">
-                  <span>Send Secure Invitation</span>
-                  <ArrowRight className="w-5 h-5" />
+                  {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Send Secure Invitation</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
             </div>
@@ -827,8 +825,7 @@ export default function FamilyDirectory() {
                   />
                 </div>
                 <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-md">
-                  <span>Create Circle</span>
-                  <ArrowRight className="w-5 h-5" />
+                  {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Create Circle</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
             </div>
@@ -875,8 +872,7 @@ export default function FamilyDirectory() {
                   </select>
                 </div>
                 <button type="submit" className="w-full bg-brand-500 hover:bg-brand-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-md">
-                  <span>Send Join Request</span>
-                  <ArrowRight className="w-5 h-5" />
+                  {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Send Join Request</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
             </div>

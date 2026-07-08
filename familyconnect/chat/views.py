@@ -6,9 +6,13 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.utils import timezone
 from django.conf import settings
 from django.db.models import Max
-from google import genai
-from google.genai import types
 import os
+
+try:
+    import google.generativeai as genai_legacy
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 
 from .models import Conversation, Message, UserConversation, Story
 from .serializers import (
@@ -172,7 +176,11 @@ class AIAssistantView(APIView):
             return self.get_rule_based_response(prompt, context_type)
 
         try:
-            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            if not GENAI_AVAILABLE:
+                return self.get_rule_based_response(prompt, context_type, api_error="google-generativeai not installed")
+
+            genai_legacy.configure(api_key=settings.GEMINI_API_KEY)
+            model = genai_legacy.GenerativeModel('gemini-1.5-flash')
 
             system_instruction = "You are a helpful family health assistant. "
             if context_type == 'HEALTH':
@@ -180,19 +188,16 @@ class AIAssistantView(APIView):
             else:
                 system_instruction += "Summarize the family conversation and highlight key action items or updates."
 
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=f"{system_instruction}\n\nUser Input: {prompt}"
-            )
+            response = model.generate_content(f"{system_instruction}\n\nUser Input: {prompt}")
             return Response({'analysis': response.text}, status=status.HTTP_200_OK)
         except Exception as e:
-            # On Google API or client failures, transparently fallback to rule-based insights
             return self.get_rule_based_response(prompt, context_type, api_error=str(e))
 
     def get_rule_based_response(self, prompt, context_type, api_error=None):
-        if settings.GEMINI_API_KEY:
+        if settings.GEMINI_API_KEY and GENAI_AVAILABLE:
             try:
-                client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                genai_legacy.configure(api_key=settings.GEMINI_API_KEY)
+                model = genai_legacy.GenerativeModel('gemini-1.5-flash')
 
                 if context_type == 'HEALTH':
                     full_prompt = f"""
@@ -222,19 +227,8 @@ User question:
 {prompt}
 """
 
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=full_prompt
-                )
-
-                return Response(
-                    {
-                        'analysis': response.text,
-                        'fallback': False,
-                        'api_error': None
-                    },
-                    status=status.HTTP_200_OK
-                )
+                response = model.generate_content(full_prompt)
+                return Response({'analysis': response.text, 'fallback': False, 'api_error': None}, status=status.HTTP_200_OK)
             except Exception as e:
                 api_error = str(e)
 

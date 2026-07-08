@@ -107,7 +107,12 @@ def detect_anomalies(user):
     return anomalies
 
 from django.conf import settings
-from google import genai
+
+try:
+    import google.generativeai as genai_legacy
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 
 def generate_health_suggestions(user):
     """
@@ -126,9 +131,8 @@ def generate_health_suggestions(user):
         return suggestions
         
     # Check if Gemini API key is available
-    if getattr(settings, 'GEMINI_API_KEY', ''):
+    if getattr(settings, 'GEMINI_API_KEY', '') and GENAI_AVAILABLE:
         try:
-            # Prepare context from recent logs
             context = []
             for r in recent_records:
                 context.append(
@@ -143,7 +147,7 @@ def generate_health_suggestions(user):
                     f"- BMI: {r.bmi or 'N/A'}"
                 )
             context_str = "\n---\n".join(context)
-            
+
             prompt = (
                 "You are an empathetic, professional AI family healthcare wellness assistant.\n"
                 f"Here is the user's recent health log data:\n{context_str}\n\n"
@@ -151,15 +155,12 @@ def generate_health_suggestions(user):
                 "wellness suggestions, diet advice, or sleep/hydration tips. Do not provide medical diagnoses. "
                 "Output each suggestion as a single plain-text line starting with a bullet (-). No header or extra intro text."
             )
-            
-            client = genai.Client(api_key=settings.GEMINI_API_KEY)
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
-            )
+
+            genai_legacy.configure(api_key=settings.GEMINI_API_KEY)
+            model = genai_legacy.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
             text = response.text.strip()
-            
-            # Parse lines starting with '-' or '*'
+
             ai_suggestions = []
             for line in text.split('\n'):
                 line = line.strip()
@@ -169,7 +170,7 @@ def generate_health_suggestions(user):
                     line = line.lstrip('-*').strip()
                 if line:
                     ai_suggestions.append(line)
-                    
+
             if len(ai_suggestions) >= 2:
                 return ai_suggestions
         except Exception as e:

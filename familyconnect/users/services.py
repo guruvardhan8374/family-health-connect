@@ -33,34 +33,43 @@ def send_otp_email(email, otp_code):
 def send_otp_sms(phone_number, otp_code):
     """
     Sends the OTP code via SMS using Twilio.
-    Falls back to console logging if Twilio is not configured.
+    Falls back to console logging if Twilio is not configured or fails.
     """
     from django.conf import settings
     
     message_body = f"Your Family Health Connect verification code is: {otp_code}. It will expire in 10 minutes."
     
-    if getattr(settings, 'TWILIO_ACCOUNT_SID', None) and getattr(settings, 'TWILIO_AUTH_TOKEN', None) and getattr(settings, 'TWILIO_PHONE_NUMBER', None):
+    sid = getattr(settings, 'TWILIO_ACCOUNT_SID', '')
+    token = getattr(settings, 'TWILIO_AUTH_TOKEN', '')
+    phone = getattr(settings, 'TWILIO_PHONE_NUMBER', '')
+    
+    # Check if configured and not placeholder values
+    has_twilio = (sid and token and phone and 
+                  'your_' not in sid and 
+                  'your_' not in token and 
+                  '+1234567890' not in phone)
+                  
+    if has_twilio:
         try:
             from twilio.rest import Client
-            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+            client = Client(sid, token)
             message = client.messages.create(
                 body=message_body,
-                from_=settings.TWILIO_PHONE_NUMBER,
+                from_=phone,
                 to=phone_number
             )
             logger.info(f"Twilio SMS sent to {phone_number}, SID: {message.sid}")
             return True
         except Exception as e:
-            logger.error(f"Failed to send Twilio SMS to {phone_number}: {str(e)}")
-            return False
-    else:
-        # Fallback to console logging
-        logger.info(f"Sending OTP via SMS to {phone_number}: {message_body}")
-        print(f"\n=======================================================")
-        print(f"SMS TO: {phone_number}")
-        print(f"MESSAGE: {message_body}")
-        print(f"=======================================================\n")
-        return True
+            logger.error(f"Failed to send Twilio SMS to {phone_number}: {str(e)}. Falling back to console.")
+            
+    # Fallback to console logging
+    logger.info(f"Sending OTP via SMS to {phone_number}: {message_body}")
+    print(f"\n=======================================================")
+    print(f"SMS TO: {phone_number}")
+    print(f"MESSAGE: {message_body}")
+    print(f"=======================================================\n")
+    return True
 
 def verify_otp(user, otp_code):
     """

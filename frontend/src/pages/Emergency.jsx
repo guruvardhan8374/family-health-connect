@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { ShieldAlert, Phone, MapPin, AlertTriangle, Loader2, CheckCircle } from 'lucide-react';
+import { ShieldAlert, Phone, MapPin, AlertTriangle, Loader2, CheckCircle, Siren } from 'lucide-react';
 import api from '../utils/api';
+import { useSyncEvent } from '../contexts/SyncContext';
 
 export default function Emergency() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [incomingAlerts, setIncomingAlerts] = useState([]);
 
   const handleSOS = async () => {
     setLoading(true);
@@ -31,12 +33,53 @@ export default function Emergency() {
     }
   };
 
+  // ── Receive SOS alerts from family members' mobile apps ───────────────────
+  useSyncEvent('emergency.alert', (event) => {
+    const alert = {
+      id: event.data?.id || Date.now(),
+      message: event.data?.message || 'Emergency! A family member needs help.',
+      triggeredBy: event.data?.triggered_by || 'Family Member',
+      location: event.data?.location_lat
+        ? `${event.data.location_lat.toFixed(4)}, ${event.data.location_lng.toFixed(4)}`
+        : 'Location unavailable',
+      time: new Date().toLocaleTimeString(),
+    };
+    setIncomingAlerts((prev) => [alert, ...prev.slice(0, 4)]); // keep last 5
+  }, []);
+
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-bold text-navy-900 tracking-tight">Emergency Protocol</h1>
         <p className="text-navy-500 mt-1">Configure SOS settings and emergency contacts.</p>
       </header>
+
+      {/* Live incoming SOS alerts from mobile */}
+      {incomingAlerts.length > 0 && (
+        <div className="space-y-3">
+          {incomingAlerts.map((alert) => (
+            <div key={alert.id} className="flex items-start gap-4 bg-red-600 text-white p-5 rounded-3xl shadow-xl shadow-red-600/30 animate-slide-in">
+              <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center shrink-0">
+                <Siren className="w-5 h-5 animate-pulse" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-lg">🚨 SOS from {alert.triggeredBy}</p>
+                <p className="text-red-100 text-sm mt-0.5">{alert.message}</p>
+                <div className="flex flex-wrap gap-4 mt-2 text-xs text-red-200">
+                  <span>📍 {alert.location}</span>
+                  <span>⏰ {alert.time}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIncomingAlerts((prev) => prev.filter((a) => a.id !== alert.id))}
+                className="text-red-200 hover:text-white text-xs font-bold shrink-0 mt-1"
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-red-50 p-8 rounded-3xl border border-red-100 text-center flex flex-col items-center justify-center relative overflow-hidden">
@@ -69,7 +112,11 @@ export default function Emergency() {
               <AlertTriangle className="w-5 h-5 text-orange-500 mr-2" />
               Active Alerts
             </h3>
-            <p className="text-navy-500 text-sm">No active alerts at the moment.</p>
+            {incomingAlerts.length === 0 ? (
+              <p className="text-navy-500 text-sm">No active alerts at the moment.</p>
+            ) : (
+              <p className="text-red-600 text-sm font-bold">{incomingAlerts.length} active SOS alert(s) — check above.</p>
+            )}
           </div>
 
           <div className="bg-white p-6 rounded-3xl border border-navy-100 shadow-sm">
@@ -115,3 +162,4 @@ export default function Emergency() {
     </div>
   );
 }
+

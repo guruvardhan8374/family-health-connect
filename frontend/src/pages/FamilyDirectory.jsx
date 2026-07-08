@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import api from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useSyncEvent } from '../contexts/SyncContext';
 
 export default function FamilyDirectory() {
   const { user } = useAuth();
@@ -34,6 +35,8 @@ export default function FamilyDirectory() {
   // UI Control States
   const [activeDropdownId, setActiveDropdownId] = useState(null);
   const [activeTab, setActiveTab] = useState('directory'); // 'directory' or 'invitations'
+  const [showCodeModal, setShowCodeModal] = useState(false);
+  const [newGroupCode, setNewGroupCode] = useState({ code: '', name: '' });
 
   const fetchData = async () => {
     try {
@@ -65,6 +68,11 @@ export default function FamilyDirectory() {
   };
 
   useEffect(() => {
+    fetchData();
+  }, []);
+
+  // ── Real-time sync: new family member joined from mobile ──────────────────
+  useSyncEvent('family.update', () => {
     fetchData();
   }, []);
 
@@ -125,15 +133,20 @@ export default function FamilyDirectory() {
     if (!newGroupName.trim()) return;
     setLoading(true);
     try {
-      await api.post('/family/groups/', {
+      const res = await api.post('/family/groups/', {
         name: newGroupName,
         description: newGroupDesc
       });
+      const createdGroup = res.data;
       setNewGroupName('');
       setNewGroupDesc('');
       setShowCreateModal(false);
       await fetchData();
-      alert("Family Circle created successfully!");
+      // Show the family code in a modal
+      if (createdGroup?.family_code) {
+        setNewGroupCode({ code: createdGroup.family_code, name: createdGroup.name });
+        setShowCodeModal(true);
+      }
     } catch (err) {
       console.error(err);
       const msg = getErrorMessage(err, "Failed to create Family Circle");
@@ -867,6 +880,49 @@ export default function FamilyDirectory() {
                 </button>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+      {/* 4. Modal: Family Code Reveal */}
+      {showCodeModal && (
+        <div className="fixed inset-0 bg-navy-950/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] border border-navy-100 p-10 shadow-2xl max-w-md w-full text-center animate-in zoom-in-95 duration-200">
+            <div className="inline-flex p-4 bg-emerald-500/10 rounded-full border border-emerald-500/20 text-emerald-500 mb-6">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
+            </div>
+            <h3 className="text-2xl font-black text-navy-950 mb-2">🎉 Circle Created!</h3>
+            <p className="text-navy-500 text-sm mb-6">
+              Share this code with family members so they can join <strong className="text-navy-900">{newGroupCode.name}</strong>:
+            </p>
+            <div className="bg-navy-50 border-2 border-dashed border-brand-300 rounded-2xl p-6 mb-6">
+              <p className="text-4xl font-black tracking-[0.3em] text-brand-600 font-mono">{newGroupCode.code}</p>
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(newGroupCode.code);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className={`w-full mb-3 py-4 rounded-2xl font-extrabold text-sm transition-all flex items-center justify-center space-x-2 ${
+                copied
+                  ? 'bg-emerald-500 text-white'
+                  : 'bg-brand-500 hover:bg-brand-600 text-white shadow-md shadow-brand-500/20'
+              }`}
+            >
+              {copied ? (
+                <><Check className="w-4 h-4" /><span>Copied!</span></>
+              ) : (
+                <><Copy className="w-4 h-4" /><span>Copy Join Code</span></>
+              )}
+            </button>
+            <button
+              onClick={() => setShowCodeModal(false)}
+              className="w-full py-3 rounded-2xl font-bold text-sm text-navy-500 hover:bg-navy-50 transition-all"
+            >
+              Done
+            </button>
           </div>
         </div>
       )}

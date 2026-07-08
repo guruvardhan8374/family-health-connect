@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'audit',
     'family_health_records_app',
     'settings_app',
+    'sync',
 ]
 
 MIDDLEWARE = [

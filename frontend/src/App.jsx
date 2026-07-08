@@ -13,6 +13,7 @@ import ForgotPassword from './pages/ForgotPassword';
 import AISummary from './pages/AISummary';
 import HealthComparison from './pages/HealthComparison';
 import { AuthProvider } from './contexts/AuthContext';
+import { SyncProvider } from './contexts/SyncContext';
 
 const ProtectedRoute = ({ children }) => {
   const token = localStorage.getItem('access_token');
@@ -25,25 +26,27 @@ const ProtectedRoute = ({ children }) => {
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/verify-otp" element={<OTPVerification />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        
-        <Route path="/" element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
-          <Route index element={<Dashboard />} />
-          <Route path="health" element={<HealthHub />} />
-          <Route path="family" element={<FamilyDirectory />} />
-          <Route path="chat" element={<Chat />} />
-          <Route path="emergency" element={<Emergency />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="ai-intelligence" element={<AISummary />} />
-          <Route path="health-comparison" element={<HealthComparison />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+      <SyncProvider>
+        <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/verify-otp" element={<OTPVerification />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          
+          <Route path="/" element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
+            <Route index element={<Dashboard />} />
+            <Route path="health" element={<HealthHub />} />
+            <Route path="family" element={<FamilyDirectory />} />
+            <Route path="chat" element={<Chat />} />
+            <Route path="emergency" element={<Emergency />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="ai-intelligence" element={<AISummary />} />
+            <Route path="health-comparison" element={<HealthComparison />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+      </SyncProvider>
     </AuthProvider>
   );
 }

@@ -13,11 +13,25 @@ class FamilyGroupSerializer(serializers.ModelSerializer):
 
 class FamilyMembershipSerializer(serializers.ModelSerializer):
     user_details = UserSerializer(source='user', read_only=True)
+    latest_location = serializers.SerializerMethodField()
     
     class Meta:
         model = FamilyMembership
-        fields = ['id', 'user', 'family_group', 'joined_at', 'is_admin', 'user_details', 'label', 'is_approved']
+        fields = ['id', 'user', 'family_group', 'joined_at', 'is_admin', 'user_details', 'label', 'is_approved', 'latest_location']
         read_only_fields = ['id', 'joined_at']
+
+    def get_latest_location(self, obj):
+        try:
+            latest = obj.user.location_history.order_by('-timestamp').first()
+            if latest:
+                return {
+                    'latitude': latest.latitude,
+                    'longitude': latest.longitude,
+                    'timestamp': latest.timestamp
+                }
+        except Exception:
+            pass
+        return None
 
 class FamilyGroupDetailSerializer(serializers.ModelSerializer):
     memberships = FamilyMembershipSerializer(many=True, read_only=True)

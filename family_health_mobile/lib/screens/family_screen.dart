@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
+import '../services/sync_service.dart';
 
 class FamilyScreen extends StatefulWidget {
   const FamilyScreen({super.key});
@@ -11,22 +14,102 @@ class FamilyScreen extends StatefulWidget {
 
 class _FamilyScreenState extends State<FamilyScreen> {
   List<dynamic> _members = [];
+  List<dynamic> _groups = [];
   bool _isLoading = true;
+  StreamSubscription? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     _fetchMembers();
+    _syncSubscription = SyncService.instance.stream.listen((event) {
+      if (event['type'] == 'family.update') {
+        _fetchMembers();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchMembers() async {
-    final members = await ApiService.getFamilyMembers();
+    final results = await Future.wait([
+      ApiService.getFamilyMembers(),
+      ApiService.getFamilyGroups(),
+    ]);
     if (mounted) {
       setState(() {
-        _members = members;
+        _members = results[0];
+        _groups = results[1];
         _isLoading = false;
       });
     }
+  }
+
+  void _showFamilyCodeDialog(String code, String groupName) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.vpn_key_rounded, color: Color(0xFF14B8A6)),
+            SizedBox(width: 8),
+            Text('Family Join Code', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Share this code with family members so they can join "$groupName":',
+                textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF64748B))),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF14B8A6).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF14B8A6), width: 1.5),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(code,
+                      style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 4,
+                          color: Color(0xFF14B8A6))),
+                  const SizedBox(width: 12),
+                  IconButton(
+                    icon: const Icon(Icons.copy_rounded, color: Color(0xFF14B8A6)),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: code));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Code copied to clipboard!'), backgroundColor: Color(0xFF14B8A6)),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF14B8A6),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Done', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showAddMemberDialog() async {
@@ -251,7 +334,25 @@ class _FamilyScreenState extends State<FamilyScreen> {
                             final desc = descController.text.trim();
                             final res = await ApiService.createFamilyGroup(name, desc);
                             success = res != null;
-                            msg = success ? 'Family Circle "$name" created successfully!' : 'Failed to create Family Circle.';
+                            if (success && res != null) {
+                              final code = res['family_code']?.toString() ?? '';
+                              msg = 'Family Circle "$name" created!';
+                              if (ctx.mounted) {
+                                Navigator.pop(ctx);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(msg), backgroundColor: Colors.green),
+                                );
+                                setState(() => _isLoading = true);
+                                _fetchMembers();
+                                if (code.isNotEmpty) {
+                                  Future.delayed(const Duration(milliseconds: 300), () {
+                                    _showFamilyCodeDialog(code, name);
+                                  });
+                                }
+                              }
+                              return;
+                            }
+                            msg = 'Failed to create Family Circle.';
                           }
 
                           if (ctx.mounted) {
@@ -313,7 +414,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 // All safe banner
                 Container(
                   padding: const EdgeInsets.all(16),
-                  margin: const EdgeInsets.only(bottom: 20),
+                  margin: const EdgeInsets.only(bottom: 12),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
                       colors: [Color(0xFF14B8A6), Color(0xFF0D9488)],
@@ -336,6 +437,45 @@ class _FamilyScreenState extends State<FamilyScreen> {
                     ],
                   ),
                 ),
+
+                // My Family Group Code Banner
+                if (_groups.isNotEmpty)
+                  GestureDetector(
+                    onTap: () {
+                      final code = _groups[0]['family_code']?.toString() ?? '';
+                      final name = _groups[0]['name']?.toString() ?? 'My Group';
+                      if (code.isNotEmpty) _showFamilyCodeDialog(code, name);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      margin: const EdgeInsets.only(bottom: 20),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3B82F6).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.vpn_key_rounded, color: Color(0xFF3B82F6), size: 22),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Your Group Join Code',
+                                    style: TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold, fontSize: 13)),
+                                Text(
+                                  _groups[0]['family_code']?.toString() ?? '',
+                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 3),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.copy_rounded, color: Color(0xFF3B82F6), size: 18),
+                        ],
+                      ),
+                    ),
+                  ),
 
                 if (_members.isEmpty)
                   const Padding(

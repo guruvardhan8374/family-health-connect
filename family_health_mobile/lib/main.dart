@@ -9,10 +9,24 @@ import 'screens/chat_screen.dart';
 import 'screens/emergency_screen.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
+import 'services/sync_service.dart';
 
 class ThemeController {
   static final ThemeController instance = ThemeController._internal();
-  ThemeController._internal();
+
+  ThemeController._internal() {
+    SyncService.instance.stream.listen((event) {
+      if (event['type'] == 'settings.update' && event['section'] == 'theme') {
+        final data = event['data'];
+        if (data != null) {
+          final isDark = data['dark_mode'] as bool? ?? false;
+          final colorName = data['theme_color'] as String? ?? 'emerald';
+          themeMode.value = isDark ? ThemeMode.dark : ThemeMode.light;
+          themeColor.value = colorFromString(colorName);
+        }
+      }
+    });
+  }
 
   final ValueNotifier<ThemeMode> themeMode = ValueNotifier<ThemeMode>(ThemeMode.light);
   final ValueNotifier<Color> themeColor = ValueNotifier<Color>(const Color(0xFF14B8A6));
@@ -176,6 +190,8 @@ class _AuthGateState extends State<AuthGate> {
     final loggedIn = await AuthService.isLoggedIn();
     if (loggedIn) {
       await ThemeController.instance.loadTheme();
+      // ── Start real-time sync WebSocket ───────────────────────────
+      SyncService.instance.connect();
     }
     setState(() {
       _isLoggedIn = loggedIn;

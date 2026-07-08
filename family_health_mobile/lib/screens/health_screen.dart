@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/sync_service.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -17,10 +19,23 @@ class _HealthScreenState extends State<HealthScreen> {
   String _steps = '--';
   String _sleep = '--';
 
+  StreamSubscription? _syncSubscription;
+
   @override
   void initState() {
     super.initState();
     _fetchData();
+    _syncSubscription = SyncService.instance.stream.listen((event) {
+      if (event['type'] == 'health.update') {
+        _fetchData();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchData() async {

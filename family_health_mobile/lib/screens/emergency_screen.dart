@@ -1,9 +1,88 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
+import '../services/sync_service.dart';
+import '../services/location_service.dart';
 
-class EmergencyScreen extends StatelessWidget {
+class EmergencyScreen extends StatefulWidget {
   const EmergencyScreen({super.key});
+
+  @override
+  State<EmergencyScreen> createState() => _EmergencyScreenState();
+}
+
+class _EmergencyScreenState extends State<EmergencyScreen> {
+  StreamSubscription? _syncSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncSubscription = SyncService.instance.stream.listen((event) {
+      if (event['type'] == 'emergency.alert') {
+        _showIncomingSOSDialog(event['data']);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _showIncomingSOSDialog(Map<String, dynamic>? data) {
+    if (!mounted || data == null) return;
+    final triggeredBy = data['triggered_by'] ?? 'Family Member';
+    final message = data['message'] ?? 'Emergency! I need help immediately.';
+    final lat = data['location_lat'];
+    final lng = data['location_lng'];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.emergency_share, color: Color(0xFFEF4444)),
+            const SizedBox(width: 8),
+            Text('🚨 SOS: $triggeredBy', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFEF4444))),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            if (lat != null && lng != null)
+              Text('Location: $lat, $lng', style: const TextStyle(fontSize: 13, color: Colors.grey)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Dismiss', style: TextStyle(color: Color(0xFF64748B))),
+          ),
+          if (lat != null && lng != null)
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF14B8A6),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final mapUrl = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+                if (await canLaunchUrl(mapUrl)) {
+                  await launchUrl(mapUrl, mode: LaunchMode.externalApplication);
+                }
+              },
+              child: const Text('View on Map', style: TextStyle(color: Colors.white)),
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -131,7 +210,7 @@ class EmergencyScreen extends StatelessWidget {
           ],
         ),
         content: const Text(
-          'This will send an emergency alert with your location to all family members and emergency contacts.'),
+          'This will send an emergency alert with your real GPS location to all family members and emergency contacts.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -144,11 +223,21 @@ class EmergencyScreen extends StatelessWidget {
             ),
             onPressed: () async {
               Navigator.pop(ctx);
-              
-              // Call API
-              final success = await ApiService.triggerSOS(lat: 17.4065, lng: 78.4772); // Hyderabad coordinates
-              
-              if (ctx.mounted) {
+
+              // Fetch real GPS position
+              final position = await LocationService.getCurrentPosition();
+              final double lat = position?.latitude ?? 0.0;
+              final double lng = position?.longitude ?? 0.0;
+
+              // Also save the current location to the user's history
+              if (position != null) {
+                await ApiService.updateLocation(lat: lat, lng: lng);
+              }
+
+              // Call API with real coordinates
+              final success = await ApiService.triggerSOS(lat: lat, lng: lng);
+
+              if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(success ? '🚨 SOS Alert sent to all family members!' : '❌ Failed to send SOS alert.'),
@@ -164,3 +253,4 @@ class EmergencyScreen extends StatelessWidget {
     );
   }
 }
+

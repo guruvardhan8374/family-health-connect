@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
+import '../services/location_service.dart';
 import 'settings_screen.dart';
+import 'live_location_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -164,7 +166,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               onPressed: () async {
                                 Navigator.pop(context);
                                 
-                                final success = await ApiService.triggerSOS(lat: 17.4065, lng: 78.4772);
+                                // Fetch real GPS
+                                final position = await LocationService.getCurrentPosition();
+                                final double lat = position?.latitude ?? 0.0;
+                                final double lng = position?.longitude ?? 0.0;
+
+                                if (position != null) {
+                                  await ApiService.updateLocation(lat: lat, lng: lng);
+                                }
+
+                                final success = await ApiService.triggerSOS(lat: lat, lng: lng);
                                 
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
@@ -225,6 +236,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
   
+                  // Family Map Button
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 20),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.all(16),
+                          backgroundColor: const Color(0xFF3B82F6), // Blue
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        icon: const Icon(Icons.map_rounded, color: Colors.white),
+                        label: const Text('View Live Family Map', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                        onPressed: () {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => const LiveLocationScreen()));
+                        },
+                      ),
+                    ),
+                  ),
+                  
                   // Section title
                   const Padding(
                     padding: EdgeInsets.only(bottom: 12),

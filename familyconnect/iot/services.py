@@ -38,8 +38,9 @@ class IoTDataSyncService:
                 user=user, metric_type='SLEEP', value=sleep_score, unit='score'
             ))
 
-            # Bulk create metrics
-            HealthMetric.objects.bulk_create(new_metrics)
+            # Save metrics individually to trigger post_save signals/sync broadcasts
+            for metric in new_metrics:
+                metric.save()
 
             # Update sync record
             sync_record.status = 'SUCCESS'

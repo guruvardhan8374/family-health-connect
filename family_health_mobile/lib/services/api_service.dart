@@ -3,8 +3,8 @@ import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 
 class ApiService {
-  // Bypassing Windows Firewall by using a permanent secure tunnel to your backend
-  static const String baseUrl = 'https://familyhealthbackend.loca.lt/api/v1';
+  // Point to the local IP of the machine running Django
+  static const String baseUrl = 'http://192.168.1.6:8000/api/v1';
   // Note: 10.0.2.2 is Android emulator's alias for localhost
   // For physical device, use your computer's local IP e.g. http://192.168.1.x:8000
 
@@ -49,6 +49,20 @@ class ApiService {
       return [];
     } catch (e) {
       return [];
+    }
+  }
+
+  static Future<bool> updateLocation({required double lat, required double lng}) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/users/locations/'),
+        headers: headers,
+        body: jsonEncode({'latitude': lat, 'longitude': lng}),
+      );
+      return response.statusCode == 201;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -493,4 +507,39 @@ class ApiService {
       return null;
     }
   }
+
+  // ─── Wireless Vitals & IoT Sync API ──────────────────────────────────────────
+
+  /// Triggers a manual sync for an external platform (e.g. GOOGLE_FIT, APPLE_HEALTH, FITBIT, GARMIN)
+  static Future<bool> syncIoTData(String platform) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/iot/sync/'),
+        headers: headers,
+        body: jsonEncode({'platform': platform}),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Retrieves sync logs and histories for external devices/platforms
+  static Future<List<dynamic>> getIoTSyncHistory() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/iot/history/'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as List<dynamic>;
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
 }
+

@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from "../utils/api";
+import { useSyncEvent } from '../contexts/SyncContext';
 import { 
   Activity, Heart, Droplets, Moon, Flame, Wind, 
   Brain, Zap, Plus, ArrowUpRight, ArrowDownRight,
-  ChevronRight, Calendar, Filter
+  ChevronRight, Calendar, RefreshCw
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, 
@@ -58,28 +59,41 @@ const MetricCard = ({ title, value, unit, icon: Icon, color, trend, trendValue }
 );
 export default function HealthHub() {
   const [healthData, setHealthData] = useState(null);
-  const [timeRange, setTimeRange] = useState('daily');
+  const [timeRange, setTimeRange] = useState('Daily');
   const [selectedMember, setSelectedMember] = useState(null);
+  const [syncFlash, setSyncFlash] = useState(false);
+
+  const fetchHealthData = useCallback(async () => {
+    try {
+      const response = await api.get('/health-records/');
+      if (response.data.length > 0) {
+        setHealthData(response.data[0]);
+      }
+    } catch (error) {
+      console.error("Health fetch failed", error);
+    }
+  }, []);
 
   useEffect(() => {
-    const fetchHealthData = async () => {
-      try {
-        const response = await api.get('/health-records/');
-
-        console.log("HEALTH API:", response.data);
-
-        if (response.data.length > 0) {
-          setHealthData(response.data[0]);
-        }
-      } catch (error) {
-        console.error("Health fetch failed", error);
-      }
-    };
     fetchHealthData();
-  }, []);
+  }, [fetchHealthData]);
+
+  // ── Real-time sync: new health record added on mobile ──────────────────
+  useSyncEvent('health.update', () => {
+    setSyncFlash(true);
+    fetchHealthData();
+    setTimeout(() => setSyncFlash(false), 2500);
+  }, [fetchHealthData]);
 
   return (
     <div className="space-y-8 pb-12">
+      {/* Sync flash banner */}
+      {syncFlash && (
+        <div className="fixed top-20 right-6 z-50 flex items-center gap-2 bg-brand-500 text-white px-5 py-3 rounded-2xl shadow-xl animate-slide-in">
+          <RefreshCw className="w-4 h-4 animate-spin" />
+          <span className="text-sm font-bold">Health data updated from mobile</span>
+        </div>
+      )}
       {/* Header Section */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>

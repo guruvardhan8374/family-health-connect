@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import i18n from '../i18n';
 import api from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useSyncEvent } from '../contexts/SyncContext';
 import { applyTheme } from '../utils/theme';
 import {
   User, Bell, Shield, Eye, Moon, Sun,
@@ -106,6 +107,21 @@ export default function Settings() {
     };
     fetchSettings();
   }, []);
+
+  // ── Real-time sync from other devices (mobile → web) ──────────────────────
+  useSyncEvent('settings.update', (event) => {
+    const { section, data } = event;
+    if (section === 'theme') {
+      setTheme((prev) => ({ ...prev, ...data }));
+      applyTheme(data.theme_color ?? theme.theme_color, data.dark_mode ?? theme.dark_mode);
+    } else if (section === 'notifications') {
+      setNotifications((prev) => ({ ...prev, ...data }));
+    } else if (section === 'privacy') {
+      setPrivacy((prev) => ({ ...prev, ...data }));
+    } else if (section === 'profile') {
+      setProfile((prev) => ({ ...prev, ...data }));
+    }
+  }, [theme]);
 
   // Show status banner temporarily
   const triggerFeedback = (message, isError = false) => {

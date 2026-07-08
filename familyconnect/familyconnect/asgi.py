@@ -10,12 +10,14 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'familyconnect.settings')
 django_asgi_app = get_asgi_application()
 
 import chat.routing
+import sync.routing
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
     "websocket": AuthMiddlewareStack(
         URLRouter(
-            chat.routing.websocket_urlpatterns
+            chat.routing.websocket_urlpatterns +
+            sync.routing.websocket_urlpatterns
         )
     ),
 })

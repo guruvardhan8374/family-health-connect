@@ -4,9 +4,10 @@ import api from '../utils/api';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser]     = useState(null);
+  const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // ── Load / refresh the user profile from backend ────────────────────────
   const loadUser = useCallback(async () => {
     const token = localStorage.getItem('access_token');
     if (!token) {
@@ -15,84 +16,72 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // Google / Firebase users — build from localStorage directly
-    const authProvider = localStorage.getItem('auth_provider');
-    if (authProvider === 'google') {
+    // Google/Firebase — reconstruct user from localStorage (no backend call needed)
+    if (localStorage.getItem('auth_provider') === 'google') {
       setUser({
         id:            localStorage.getItem('user_id'),
         username:      localStorage.getItem('username') || 'User',
-        email:         localStorage.getItem('email') || '',
-        role:          localStorage.getItem('role') || 'MEMBER',
+        email:         localStorage.getItem('email')    || '',
+        role:          localStorage.getItem('role')     || 'MEMBER',
         auth_provider: 'google',
       });
       setLoading(false);
       return;
     }
 
-    // Django JWT users — fetch full profile from backend
+    // Django JWT — fetch full profile
     try {
-      const res = await api.get('/users/profile/');
+      const res     = await api.get('/users/profile/');
       const profile = res.data;
-      // Keep localStorage in sync with latest profile data
+      // Keep localStorage in sync
       if (profile.id)       localStorage.setItem('user_id',  profile.id.toString());
       if (profile.username) localStorage.setItem('username', profile.username);
       if (profile.email)    localStorage.setItem('email',    profile.email);
       if (profile.role)     localStorage.setItem('role',     profile.role);
       setUser(profile);
     } catch (err) {
-      // 401 means token expired/invalid — clear and redirect handled by api interceptor
       if (err.response?.status === 401) {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('auth_provider');
+        // Token invalid — interceptor already called clearAuthAndRedirect
         setUser(null);
-      }
-      // For network errors (Render cold start) keep the cached user from localStorage
-      // so the UI doesn't flash logout on slow first load
-      else {
-        const cachedUser = {
+      } else {
+        // Network error (Render cold start) — serve cached user so UI doesn't flash logout
+        const cached = {
           id:       localStorage.getItem('user_id'),
           username: localStorage.getItem('username') || 'User',
-          email:    localStorage.getItem('email') || '',
-          role:     localStorage.getItem('role') || 'MEMBER',
+          email:    localStorage.getItem('email')    || '',
+          role:     localStorage.getItem('role')     || 'MEMBER',
         };
-        if (cachedUser.id) setUser(cachedUser);
-        else setUser(null);
+        setUser(cached.id ? cached : null);
       }
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadUser();
-  }, [loadUser]);
+  // Load user on mount
+  useEffect(() => { loadUser(); }, [loadUser]);
 
-  const login = (tokenData) => {
-    // Store all tokens and user info
+  // ── Called immediately after a successful login API response ─────────────
+  // Returns a Promise so callers can await it before navigating
+  const login = useCallback((tokenData) => {
     localStorage.setItem('access_token',  tokenData.access);
     localStorage.setItem('refresh_token', tokenData.refresh);
     if (tokenData.user_id)  localStorage.setItem('user_id',  tokenData.user_id.toString());
     if (tokenData.username) localStorage.setItem('username', tokenData.username);
     if (tokenData.email)    localStorage.setItem('email',    tokenData.email);
     if (tokenData.role)     localStorage.setItem('role',     tokenData.role);
-    // Then fetch full profile so user object has all fields
-    loadUser();
-  };
+    return loadUser(); // returns the promise — callers can await
+  }, [loadUser]);
 
-  const logout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    localStorage.removeItem('user_id');
-    localStorage.removeItem('username');
-    localStorage.removeItem('email');
-    localStorage.removeItem('role');
-    localStorage.removeItem('auth_provider');
+  // ── Full logout ──────────────────────────────────────────────────────────
+  const logout = useCallback(() => {
+    ['access_token','refresh_token','user_id','username','email','role','auth_provider']
+      .forEach(k => localStorage.removeItem(k));
     setUser(null);
     window.location.href = '/login';
-  };
+  }, []);
 
-  const refreshUser = () => loadUser();
+  const refreshUser = useCallback(() => loadUser(), [loadUser]);
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>

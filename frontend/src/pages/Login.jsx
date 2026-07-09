@@ -77,26 +77,28 @@ export default function Login() {
         password: password.trim(),
       });
       const userData = {
-        access: response.data.access,
-        refresh: response.data.refresh,
+        access:   response.data.access,
+        refresh:  response.data.refresh,
         username: response.data.username || email.split('@')[0],
-        user_id: response.data.user_id?.toString() || '',
-        role: response.data.role || 'MEMBER',
+        user_id:  response.data.user_id?.toString() || '',
+        email:    response.data.email || email.trim(),
+        role:     response.data.role  || 'MEMBER',
       };
       if (rememberMe) {
         localStorage.setItem('remembered_email', email.trim());
       } else {
         localStorage.removeItem('remembered_email');
       }
-      login(userData);
-      navigate('/');
+      // Await login so user profile is fully loaded before we navigate
+      await login(userData);
+      // Redirect to dashboard — ProtectedRoute will guard from here
+      navigate('/', { replace: true });
     } catch (err) {
       if (!err.response) {
         setError('Server is unreachable. Please wait a moment and try again — the server may be waking up.');
       } else if (err.response.status === 401) {
         setError('Incorrect username/email or password. Please check and try again.');
       } else if (err.response.status === 400) {
-        // SimpleJWT returns errors in non_field_errors or detail or as object
         const data = err.response.data;
         if (data?.non_field_errors?.length) {
           setError(data.non_field_errors[0]);
@@ -109,7 +111,6 @@ export default function Login() {
         } else if (typeof data === 'string') {
           setError(data);
         } else {
-          // Flatten any remaining field errors
           const msgs = Object.values(data).flat();
           setError(msgs.length ? msgs[0] : 'Login failed. Please check your credentials.');
         }

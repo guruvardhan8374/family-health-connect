@@ -43,11 +43,12 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
                 family_group=group,
                 is_admin=True,
                 is_approved=True,
-                label='PARENT'
+                label='HEAD',
+                status='ACTIVE'
             )
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error(f"Failed to create admin membership: {e}")
+            logging.getLogger(__name__).error(f"Failed to create HEAD membership: {e}")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

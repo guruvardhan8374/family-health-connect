@@ -14,10 +14,11 @@ class FamilyGroupSerializer(serializers.ModelSerializer):
 class FamilyMembershipSerializer(serializers.ModelSerializer):
     user_details = UserSerializer(source='user', read_only=True)
     latest_location = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = FamilyMembership
-        fields = ['id', 'user', 'family_group', 'joined_at', 'is_admin', 'user_details', 'label', 'is_approved', 'latest_location']
+        fields = ['id', 'user', 'family_group', 'joined_at', 'is_admin',
+                  'user_details', 'label', 'status', 'is_approved', 'latest_location']
         read_only_fields = ['id', 'joined_at']
 
     def get_latest_location(self, obj):

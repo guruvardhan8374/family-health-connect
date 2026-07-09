@@ -14,24 +14,31 @@ class FamilyGroup(models.Model):
 
 class FamilyMembership(models.Model):
     RELATION_CHOICES = (
+        ('HEAD',   'Family Head'),
         ('PARENT', 'Parent'),
-        ('CHILD', 'Child'),
-        ('ELDER', 'Elder'),
+        ('CHILD',  'Child'),
+        ('ELDER',  'Elder'),
         ('SPOUSE', 'Spouse'),
-        ('OTHER', 'Other'),
+        ('OTHER',  'Other'),
     )
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='family_memberships')
+    STATUS_CHOICES = (
+        ('ACTIVE',    'Active'),
+        ('PENDING',   'Pending'),
+        ('INACTIVE',  'Inactive'),
+    )
+    user         = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='family_memberships')
     family_group = models.ForeignKey(FamilyGroup, on_delete=models.CASCADE, related_name='memberships')
-    joined_at = models.DateTimeField(auto_now_add=True)
-    is_admin = models.BooleanField(default=False)
-    is_approved = models.BooleanField(default=True) # Default True for creator/invited, but False for request to join
-    label = models.CharField(max_length=20, choices=RELATION_CHOICES, default='OTHER')
+    joined_at    = models.DateTimeField(auto_now_add=True)
+    is_admin     = models.BooleanField(default=False)
+    is_approved  = models.BooleanField(default=True)
+    label        = models.CharField(max_length=20, choices=RELATION_CHOICES, default='OTHER')
+    status       = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
 
     class Meta:
         unique_together = ('user', 'family_group')
 
     def __str__(self):
-        return f"{self.user.username} ({self.label}) in {self.family_group.name}"
+        return f"{self.user.username} ({self.label} / {self.status}) in {self.family_group.name}"
 
 class SafeZone(models.Model):
     family_group = models.ForeignKey(FamilyGroup, on_delete=models.CASCADE, related_name='safe_zones')

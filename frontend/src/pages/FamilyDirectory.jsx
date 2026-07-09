@@ -167,7 +167,6 @@ export default function FamilyDirectory() {
       setSubmitting(false);
     }
   };
-  };
 
   const handleJoinByCode = async (e) => {
     e.preventDefault();

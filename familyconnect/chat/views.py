@@ -9,10 +9,18 @@ from django.db.models import Max
 import os
 
 try:
-    import google.generativeai as genai_legacy
+    from google import genai as google_genai
+    from google.genai import types as genai_types
     GENAI_AVAILABLE = True
 except ImportError:
-    GENAI_AVAILABLE = False
+    try:
+        import google.generativeai as genai_legacy
+        GENAI_AVAILABLE = True
+        google_genai = None
+    except ImportError:
+        GENAI_AVAILABLE = False
+        google_genai = None
+        genai_legacy = None
 
 from .models import Conversation, Message, UserConversation, Story
 from .serializers import (
@@ -164,109 +172,110 @@ class StoryViewSet(viewsets.ModelViewSet):
 class AIAssistantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def post(self, request, *args, **kwargs):
-        prompt = request.data.get('prompt')
-        context_type = request.data.get('context_type', 'HEALTH')
-        
-        if not prompt:
-            return Response({'error': 'No prompt provided'}, status=status.HTTP_400_BAD_REQUEST)
+    def _call_gemini(self, prompt):
+        """
+        Try new google-genai SDK first, fall back to old google-generativeai.
+        Returns the response text or raises an exception.
+        """
+        api_key = settings.GEMINI_API_KEY
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY is not configured.")
 
-        # Fallback rule-based system if API key is not configured
-        if not settings.GEMINI_API_KEY:
-            return self.get_rule_based_response(prompt, context_type)
+        # New SDK (google-genai)
+        if google_genai is not None:
+            client = google_genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=prompt
+            )
+            return response.text
+
+        # Legacy SDK (google-generativeai)
+        if genai_legacy is not None:
+            genai_legacy.configure(api_key=api_key)
+            model = genai_legacy.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            return response.text
+
+        raise ImportError("No Gemini SDK available. Install google-genai.")
+
+    def post(self, request, *args, **kwargs):
+        prompt = request.data.get('prompt', '').strip()
+        context_type = request.data.get('context_type', 'HEALTH')
+
+        if not prompt:
+            return Response({'error': 'No prompt provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not settings.GEMINI_API_KEY or not GENAI_AVAILABLE:
+            return self._rule_based(prompt, context_type,
+                                    api_error="GEMINI_API_KEY not set or SDK not installed.")
+
+        # Build system-aware prompt
+        if context_type == 'HEALTH':
+            system = (
+                "You are a helpful, concise family health AI assistant. "
+                "Answer health questions clearly. Do NOT give medical diagnoses. "
+                "Highlight if values are outside normal ranges. Keep responses under 150 words."
+            )
+        else:
+            system = (
+                "You are a friendly family AI assistant. "
+                "Answer questions briefly and clearly. "
+                "Keep responses under 150 words."
+            )
+
+        full_prompt = f"{system}\n\nUser: {prompt}"
 
         try:
-            if not GENAI_AVAILABLE:
-                return self.get_rule_based_response(prompt, context_type, api_error="google-generativeai not installed")
-
-            genai_legacy.configure(api_key=settings.GEMINI_API_KEY)
-            model = genai_legacy.GenerativeModel('gemini-1.5-flash')
-
-            system_instruction = "You are a helpful family health assistant. "
-            if context_type == 'HEALTH':
-                system_instruction += "Analyze the following health data and provide a concise, reassuring summary for family members. Do not give medical advice, but highlight if values are outside normal ranges."
-            else:
-                system_instruction += "Summarize the family conversation and highlight key action items or updates."
-
-            response = model.generate_content(f"{system_instruction}\n\nUser Input: {prompt}")
-            return Response({'analysis': response.text}, status=status.HTTP_200_OK)
+            text = self._call_gemini(full_prompt)
+            return Response({
+                'analysis': text,
+                'fallback': False,
+                'api_error': None
+            }, status=status.HTTP_200_OK)
         except Exception as e:
-            return self.get_rule_based_response(prompt, context_type, api_error=str(e))
+            import logging
+            logging.getLogger(__name__).error(f"Gemini API error: {e}")
+            return self._rule_based(prompt, context_type, api_error=str(e))
 
-    def get_rule_based_response(self, prompt, context_type, api_error=None):
-        if settings.GEMINI_API_KEY and GENAI_AVAILABLE:
-            try:
-                genai_legacy.configure(api_key=settings.GEMINI_API_KEY)
-                model = genai_legacy.GenerativeModel('gemini-1.5-flash')
-
-                if context_type == 'HEALTH':
-                    full_prompt = f"""
-You are an intelligent AI assistant for Family Health Connect.
-
-Rules:
-- Answer health questions with health guidance.
-- Give short and clear answers unless detailed explanation is requested.
-- Provide hydration, sleep, exercise, and wellness suggestions only when health-related.
-- If user asks "in one line", answer in one line only.
-
-User question:
-{prompt}
-"""
-                else:
-                    full_prompt = f"""
-You are an intelligent AI assistant.
-
-Rules:
-- Answer general questions normally and briefly.
-- Keep answers short, simple, and human-friendly.
-- Do NOT give health advice unless the question is health-related.
-- If user asks "in one line", answer in one line only.
-- Only give detailed answers if user asks for details.
-
-User question:
-{prompt}
-"""
-
-                response = model.generate_content(full_prompt)
-                return Response({'analysis': response.text, 'fallback': False, 'api_error': None}, status=status.HTTP_200_OK)
-            except Exception as e:
-                api_error = str(e)
-
-        # Local rule-based/heuristic fallback if API key is empty/invalid or Gemini API calls fail
+    def _rule_based(self, prompt, context_type, api_error=None):
+        """Keyword-based fallback when Gemini is unavailable."""
         import re
-        prompt_lower = prompt.lower()
-        
-        def has_word(keywords):
-            return any(re.search(r'\b' + re.escape(kw), prompt_lower) for kw in keywords)
+        p = prompt.lower()
+
+        def has(words):
+            return any(re.search(r'\b' + re.escape(w), p) for w in words)
 
         if context_type == 'HEALTH':
-            if has_word(['sleep', 'insomnia', 'tired', 'wake', 'bed']):
-                analysis = "Aim for 7-8 hours of quality sleep tonight. Try keeping a regular sleep schedule, avoiding screens before bed, and keeping your room quiet and dark."
-            elif has_word(['water', 'hydrate', 'hydration', 'drink', 'thirsty']):
-                analysis = "Aim to drink at least 8-10 glasses (about 2-2.5 liters) of water daily to stay hydrated and support energy levels."
-            elif has_word(['exercise', 'step', 'walk', 'run', 'activity', 'fit', 'sport']):
-                analysis = "Try incorporating at least 30 minutes of moderate exercise, such as brisk walking, most days of the week to support cardiovascular health."
-            elif has_word(['diet', 'food', 'eat', 'nutrition', 'weight', 'bmi', 'calorie']):
-                analysis = "Maintain a balanced diet rich in vegetables, fruits, lean proteins, and whole grains, while limiting processed foods, sugar, and excess salt."
-            elif has_word(['heart', 'bp', 'blood pressure', 'pulse', 'vital']):
-                analysis = "A normal resting heart rate is typically 60-100 bpm, and blood pressure should ideally be below 120/80 mmHg. Consult a doctor for persistent variations."
-            elif has_word(['stress', 'anxious', 'calm', 'relax', 'mental']):
-                analysis = "Manage stress through deep breathing exercises, mindfulness, light exercise, and connecting with family. Seek professional support if needed."
+            if has(['sleep', 'insomnia', 'tired', 'wake', 'bed']):
+                text = "Aim for 7-8 hours of quality sleep. Keep a consistent schedule and avoid screens before bed."
+            elif has(['water', 'hydrat', 'drink', 'thirsty']):
+                text = "Drink 2-2.5 litres of water daily. Staying hydrated supports energy and focus."
+            elif has(['exercise', 'step', 'walk', 'run', 'activity', 'fit']):
+                text = "30 minutes of moderate exercise most days supports heart health and energy levels."
+            elif has(['diet', 'food', 'eat', 'weight', 'bmi', 'calorie']):
+                text = "A balanced diet of vegetables, lean protein, and whole grains keeps your family healthy."
+            elif has(['heart', 'bp', 'blood pressure', 'pulse']):
+                text = "Normal resting heart rate is 60-100 bpm. Ideal blood pressure is below 120/80 mmHg."
+            elif has(['stress', 'anxious', 'calm', 'relax', 'mental']):
+                text = "Deep breathing, light exercise, and family time help manage stress effectively."
+            elif has(['fever', 'temperature', 'sick', 'ill']):
+                text = "Normal temperature is 36.5-37.5°C. A fever above 38°C warrants rest and hydration."
             else:
-                analysis = "I'm monitoring your family's health queries. You can ask me about sleep, hydration, exercise, diet, heart rate, or stress management."
+                text = ("I can help with sleep, hydration, exercise, diet, heart rate, and stress. "
+                        "Ask me anything about your family's wellness!")
         else:
-            if has_word(['hi', 'hello', 'hey', 'greetings']):
-                analysis = "Hello! I am your Family Health AI Assistant. How can I help you and your family today?"
-            elif has_word(['summary', 'conversation', 'chat', 'discuss']):
-                analysis = "Based on the recent family conversation, everyone seems to be staying active. Keep sharing updates and supporting each other!"
+            if has(['hi', 'hello', 'hey']):
+                text = "Hello! I'm your Family Health AI. How can I help you today?"
+            elif has(['summary', 'summarize', 'conversation']):
+                text = "Your family has been active and engaged. Keep sharing updates and supporting each other!"
+            elif has(['emergency', 'sos', 'help', 'urgent']):
+                text = "If this is a medical emergency, please call emergency services (112 or 911) immediately."
             else:
-                analysis = "I am your Family Health Assistant. I can help you summarize family health updates or answer questions about wellness and vitals."
+                text = "I'm your Family Health Assistant. I can answer health questions or summarize family updates."
 
-        return Response(
-            {
-                'analysis': analysis,
-                'fallback': True,
-                'api_error': api_error
-            },
-            status=status.HTTP_200_OK
-        )
+        return Response({
+            'analysis': text,
+            'fallback': True,
+            'api_error': api_error
+        }, status=status.HTTP_200_OK)

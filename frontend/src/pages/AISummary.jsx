@@ -1,181 +1,242 @@
-import { useState, useEffect } from 'react';
-import { Brain, TrendingUp, AlertCircle, Calendar, ArrowRight, ShieldCheck, Activity } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { useState, useEffect, useRef } from 'react';
+import {
+  Brain, Send, Loader2, Bot, User, Sparkles,
+  HeartPulse, Activity, Droplets, Moon, RefreshCw, AlertCircle
+} from 'lucide-react';
 import api from '../utils/api';
-import VoiceInterface from '../components/VoiceInterface';
 
-const data = [
-  { name: 'Mon', score: 85 },
-  { name: 'Tue', score: 78 },
-  { name: 'Wed', score: 92 },
-  { name: 'Thu', score: 88 },
-  { name: 'Fri', score: 76 },
-  { name: 'Sat', score: 80 },
-  { name: 'Sun', score: 89 },
+const QUICK_PROMPTS = [
+  { label: 'Heart Rate', icon: HeartPulse, prompt: 'What is a healthy heart rate range for adults?' },
+  { label: 'Sleep Tips', icon: Moon,       prompt: 'How many hours of sleep does my family need?' },
+  { label: 'Hydration',  icon: Droplets,   prompt: 'How much water should we drink daily?' },
+  { label: 'Exercise',   icon: Activity,   prompt: 'What exercise is best for family health?' },
 ];
 
 export default function AISummary() {
-  const [summary, setSummary] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [messages, setMessages]   = useState([
+    {
+      id: 1,
+      role: 'assistant',
+      text: "Hi! I'm your Family Health AI Assistant 🩺\n\nI can answer health questions, analyze your family's wellness, and give personalised tips. What would you like to know?",
+      ts: new Date().toISOString(),
+    }
+  ]);
+  const [input, setInput]         = useState('');
+  const [loading, setLoading]     = useState(false);
+  const [contextType, setContextType] = useState('HEALTH');
+  const [fallbackNote, setFallbackNote] = useState('');
+
+  const bottomRef = useRef(null);
+  const inputRef  = useRef(null);
 
   useEffect(() => {
-    const fetchAIReport = async () => {
-      try {
-        setLoading(true);
-        const res = await api.get('/health-records/health-intelligence/');
-        const score = res.data.health_score || 70;
-        const anomalies = res.data.anomalies || [];
-        const suggestions = res.data.suggestions || [];
-        
-        // Merge anomalies and suggestions
-        const insights = [];
-        anomalies.forEach(a => {
-          insights.push(`Anomaly warning: ${a.message} (${a.metric}: ${a.value})`);
-        });
-        insights.push(...suggestions);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-        if (insights.length === 0) {
-          insights.push(
-            "Overall heart rates, sleep duration, and blood pressure are within ideal parameters.",
-            "Continue logging metrics regularly to enable advanced anomaly alarms."
-          );
-        }
+  const sendMessage = async (promptText) => {
+    const text = (promptText || input).trim();
+    if (!text || loading) return;
 
-        setSummary({
-          overallScore: score,
-          trend: score >= 80 ? 'improving' : 'needs attention',
-          insights: insights
-        });
-      } catch (err) {
-        console.error("Failed to fetch AI report:", err);
-        // Fallback report
-        setSummary({
-          overallScore: 75,
-          trend: 'stable',
-          insights: [
-            "Maintain consistent hydration levels throughout the day.",
-            "Aim for at least 7-8 hours of sleep for recovery.",
-            "Ensure regular steps of 8,000+ daily."
-          ]
-        });
-      } finally {
-        setLoading(false);
+    setInput('');
+    setFallbackNote('');
+
+    // Add user message immediately
+    const userMsg = { id: Date.now(), role: 'user', text, ts: new Date().toISOString() };
+    setMessages(prev => [...prev, userMsg]);
+    setLoading(true);
+
+    try {
+      const res = await api.post('/chat/ai-assistant/', {
+        prompt: text,
+        context_type: contextType,
+      });
+
+      const data = res.data;
+      const aiMsg = {
+        id: Date.now() + 1,
+        role: 'assistant',
+        text: data.analysis || 'I could not generate a response. Please try again.',
+        ts: new Date().toISOString(),
+        fallback: data.fallback,
+      };
+      setMessages(prev => [...prev, aiMsg]);
+
+      if (data.fallback && data.api_error) {
+        setFallbackNote('AI is running in offline mode — Gemini API key may not be configured on the server.');
       }
-    };
+    } catch (err) {
+      const isAuth = err.response?.status === 401;
+      setMessages(prev => [...prev, {
+        id: Date.now() + 1,
+        role: 'error',
+        text: isAuth
+          ? 'Your session expired. Please log in again.'
+          : 'Failed to reach the AI service. Please check your connection and try again.',
+        ts: new Date().toISOString(),
+      }]);
+    } finally {
+      setLoading(false);
+      inputRef.current?.focus();
+    }
+  };
 
-    fetchAIReport();
-  }, []);
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    sendMessage();
+  };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full space-y-4">
-        <Brain className="w-12 h-12 text-brand-500 animate-pulse" />
-        <p className="text-navy-500 font-bold animate-bounce">Analyzing your family's health patterns...</p>
-      </div>
-    );
-  }
+  const clearChat = () => {
+    setMessages([{
+      id: Date.now(),
+      role: 'assistant',
+      text: "Chat cleared! How can I help your family today?",
+      ts: new Date().toISOString(),
+    }]);
+    setFallbackNote('');
+  };
 
   return (
-    <div className="max-w-5xl space-y-8 pb-12">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div>
-          <h1 className="text-4xl font-bold text-navy-900 tracking-tight">AI Wellness Intelligence</h1>
-          <p className="text-navy-500 mt-2 text-lg">Weekly aggregate analysis and predictive health warnings.</p>
-        </div>
-        <div className="flex items-center space-x-2 bg-white px-4 py-2 rounded-2xl border border-navy-100 shadow-sm">
-          <Calendar className="w-5 h-5 text-brand-500" />
-          <span className="font-bold text-navy-900">May 4 - May 11, 2026</span>
-        </div>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Weekly Score Card */}
-        <div className="bg-gradient-to-br from-brand-500 to-brand-600 p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden flex flex-col justify-between">
-          <div className="relative z-10">
-            <p className="text-brand-100 font-bold uppercase tracking-widest text-xs mb-4">Overall Family Score</p>
-            <div className="text-7xl font-black mb-2">{summary.overallScore}<span className="text-2xl opacity-50">/100</span></div>
-            <div className="flex items-center space-x-2 text-brand-100">
-              <TrendingUp className="w-5 h-5" />
-              <span className="font-bold">5% Improvement from last week</span>
-            </div>
+    <div className="max-w-3xl mx-auto flex flex-col h-[calc(100vh-120px)] pb-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center space-x-3">
+          <div className="w-10 h-10 bg-brand-500 rounded-2xl flex items-center justify-center shadow-lg shadow-brand-500/30">
+            <Brain className="w-6 h-6 text-white" />
           </div>
-          <div className="absolute top-0 right-0 p-8 opacity-20 transform translate-x-8 -translate-y-8">
-            <Brain className="w-48 h-48" />
-          </div>
-          <button className="relative z-10 w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 rounded-2xl border border-white/10 transition-all mt-8">
-            View Full AI Report
-          </button>
-        </div>
-
-        {/* Weekly Chart */}
-        <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-navy-100 shadow-sm">
-          <h3 className="text-xl font-bold text-navy-900 mb-6">Daily Wellness Trend</h3>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data}>
-                <Tooltip cursor={{fill: 'transparent'}} contentStyle={{borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
-                <Bar dataKey="score" radius={[10, 10, 10, 10]}>
-                  {data.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.score > 80 ? '#14b8a6' : '#94a3b8'} />
-                  ))}
-                </Bar>
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12, fontWeight: 700}} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div>
+            <h1 className="text-xl font-extrabold text-navy-900">Family Health AI</h1>
+            <p className="text-xs text-navy-400 font-medium">Powered by Gemini · Always available</p>
           </div>
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* AI Insights */}
-        <div className="bg-white p-8 rounded-[2.5rem] border border-navy-100 shadow-sm space-y-6">
-          <h3 className="text-xl font-bold text-navy-900 flex items-center">
-            <ShieldCheck className="w-6 h-6 text-brand-500 mr-2" />
-            Predictive Insights
-          </h3>
-          <div className="space-y-4">
-            {summary.insights.map((insight, i) => (
-              <div key={i} className="flex items-start p-4 bg-navy-50 rounded-2xl group hover:bg-white hover:shadow-md transition-all border border-transparent hover:border-navy-100">
-                <div className={`p-2 rounded-xl mr-4 ${insight.includes('Anomaly') ? 'bg-red-50 text-red-500' : 'bg-brand-50 text-brand-500'}`}>
-                  {insight.includes('Anomaly') ? <AlertCircle className="w-4 h-4" /> : <Activity className="w-4 h-4" />}
-                </div>
-                <p className="text-sm text-navy-700 leading-relaxed font-medium">{insight}</p>
-              </div>
+        <div className="flex items-center space-x-2">
+          {/* Context type toggle */}
+          <div className="flex items-center bg-navy-50 rounded-2xl p-1 border border-navy-100">
+            {['HEALTH', 'CHAT'].map(t => (
+              <button
+                key={t}
+                onClick={() => setContextType(t)}
+                className={`px-4 py-1.5 rounded-xl text-xs font-black transition-all ${
+                  contextType === t
+                    ? 'bg-brand-500 text-white shadow-sm'
+                    : 'text-navy-400 hover:text-navy-700'
+                }`}
+              >
+                {t === 'HEALTH' ? '🩺 Health' : '💬 General'}
+              </button>
             ))}
           </div>
+          <button
+            onClick={clearChat}
+            className="p-2 text-navy-400 hover:text-navy-700 hover:bg-navy-50 rounded-xl transition-all"
+            title="Clear chat"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
         </div>
-
-        {/* Quick Actions */}
-        <div className="space-y-6">
-          <div className="bg-navy-900 p-8 rounded-[2.5rem] text-white shadow-2xl">
-            <h3 className="text-xl font-bold mb-4">AI Recommended Goal</h3>
-            <p className="text-navy-400 text-sm mb-6 leading-relaxed">
-              Based on the family's lower activity levels on weekends, the AI recommends a "Sunday Family Walk" challenge.
-            </p>
-            <button className="flex items-center space-x-2 text-brand-400 font-bold hover:text-brand-300 transition-colors">
-              <span>Accept Challenge</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <button className="p-6 bg-white rounded-[2rem] border border-navy-100 shadow-sm hover:shadow-md transition-all text-left group">
-              <div className="w-10 h-10 bg-indigo-50 text-indigo-500 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-500 group-hover:text-white transition-all">
-                <Calendar className="w-5 h-5" />
-              </div>
-              <p className="font-bold text-navy-900 text-sm">Schedule Checkup</p>
-            </button>
-            <button className="p-6 bg-white rounded-[2rem] border border-navy-100 shadow-sm hover:shadow-md transition-all text-left group">
-              <div className="w-10 h-10 bg-orange-50 text-orange-500 rounded-xl flex items-center justify-center mb-4 group-hover:bg-orange-500 group-hover:text-white transition-all">
-                <TrendingUp className="w-5 h-5" />
-              </div>
-              <p className="font-bold text-navy-900 text-sm">Compare Groups</p>
-            </button>
-          </div>
-        </div>
-
-        <VoiceInterface />
       </div>
+
+      {/* Offline warning */}
+      {fallbackNote && (
+        <div className="mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center space-x-2 text-amber-700 text-xs font-semibold">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{fallbackNote}</span>
+        </div>
+      )}
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+        {messages.map(msg => (
+          <div
+            key={msg.id}
+            className={`flex items-end gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+          >
+            {/* Avatar */}
+            <div className={`w-8 h-8 rounded-2xl flex items-center justify-center shrink-0 ${
+              msg.role === 'user'    ? 'bg-brand-500 text-white' :
+              msg.role === 'error'  ? 'bg-red-100 text-red-500' :
+              'bg-emerald-50 border border-emerald-200 text-emerald-600'
+            }`}>
+              {msg.role === 'user'   ? <User className="w-4 h-4" />   :
+               msg.role === 'error'  ? <AlertCircle className="w-4 h-4" /> :
+               <Bot className="w-4 h-4" />}
+            </div>
+
+            {/* Bubble */}
+            <div className={`max-w-[80%] px-5 py-3 rounded-[1.5rem] text-sm leading-relaxed whitespace-pre-wrap ${
+              msg.role === 'user'   ? 'bg-brand-500 text-white rounded-br-md' :
+              msg.role === 'error'  ? 'bg-red-50 border border-red-200 text-red-700 rounded-bl-md' :
+              'bg-white border border-navy-100 text-navy-800 rounded-bl-md shadow-sm'
+            }`}>
+              {msg.text}
+              {msg.fallback && (
+                <span className="block mt-1 text-[10px] text-navy-400 font-semibold">
+                  ⚡ Offline mode — configure GEMINI_API_KEY for live AI
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* Typing indicator */}
+        {loading && (
+          <div className="flex items-end gap-3">
+            <div className="w-8 h-8 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+              <Bot className="w-4 h-4 text-emerald-600" />
+            </div>
+            <div className="bg-white border border-navy-100 rounded-[1.5rem] rounded-bl-md px-5 py-4 shadow-sm">
+              <div className="flex space-x-1.5">
+                {[0,1,2].map(i => (
+                  <div
+                    key={i}
+                    className="w-2 h-2 bg-brand-400 rounded-full animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Quick prompt chips */}
+      {messages.length <= 2 && !loading && (
+        <div className="mt-3 mb-2 flex flex-wrap gap-2">
+          {QUICK_PROMPTS.map(({ label, icon: Icon, prompt }) => (
+            <button
+              key={label}
+              onClick={() => sendMessage(prompt)}
+              className="flex items-center space-x-1.5 px-4 py-2 bg-white border border-navy-100 rounded-2xl text-xs font-bold text-navy-700 hover:border-brand-500 hover:text-brand-600 hover:bg-brand-50 transition-all shadow-sm"
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Input */}
+      <form onSubmit={handleSubmit} className="mt-3 flex items-center gap-3">
+        <div className="flex-1 flex items-center bg-white border border-navy-100 rounded-[1.5rem] px-5 py-3 shadow-sm focus-within:border-brand-500 transition-colors">
+          <Sparkles className="w-4 h-4 text-brand-400 mr-3 shrink-0" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Ask about sleep, heart rate, diet…"
+            className="flex-1 bg-transparent outline-none text-sm text-navy-900 placeholder-navy-400 font-medium"
+            disabled={loading}
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={!input.trim() || loading}
+          className="w-12 h-12 bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-[1.2rem] flex items-center justify-center shadow-lg shadow-brand-500/30 transition-all"
+        >
+          {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+        </button>
+      </form>
     </div>
   );
 }

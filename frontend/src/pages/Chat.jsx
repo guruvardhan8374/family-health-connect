@@ -212,14 +212,14 @@ export default function Chat() {
   const handleAskAI = async (type = 'HEALTH') => {
     setAiLoading(true);
     try {
-      const prompt = type === 'HEALTH' 
-        ? "Analyze the latest family health reports and provide a summary." 
-        : "Summarize the recent family discussion and highlights.";
+      const prompt = type === 'HEALTH'
+        ? "Analyze the latest family health reports and provide a wellness summary."
+        : "Summarize the recent family chat and highlight key updates.";
       const res = await api.post('/chat/ai-assistant/', { prompt, context_type: type });
-      
+
       const aiMsg = {
         id: Date.now(),
-        content: res.data.analysis,
+        content: res.data.analysis || 'No response from AI.',
         sender_details: {
           id: 999,
           username: 'Family AI',
@@ -227,10 +227,33 @@ export default function Chat() {
         },
         message_type: 'TEXT',
         timestamp: new Date().toISOString(),
-        is_ai: true
+        is_ai: true,
       };
+
+      // Add offline note if fallback mode
+      if (res.data.fallback) {
+        aiMsg.content += '\n\n⚡ (Offline mode — configure GEMINI_API_KEY for live AI responses)';
+      }
+
       setMessages(prev => [...prev, aiMsg]);
-    } catch (err) { console.error(err); } finally { setAiLoading(false); }
+    } catch (err) {
+      const isAuth = err.response?.status === 401;
+      const errMsg = {
+        id: Date.now(),
+        content: isAuth
+          ? 'Your session expired. Please log in again.'
+          : 'AI service is temporarily unavailable. Please try again shortly.',
+        sender_details: { id: 999, username: 'Family AI', profile_picture: 'https://i.pravatar.cc/150?u=ai' },
+        message_type: 'TEXT',
+        timestamp: new Date().toISOString(),
+        is_ai: true,
+        is_error: true,
+      };
+      setMessages(prev => [...prev, errMsg]);
+      console.error('AI assistant error:', err);
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   // Safe wrapper for call signaling (stub WebRTC because ASGI Django Channels only supports chat messages)

@@ -16,5 +16,6 @@ channels
 channels-redis
 daphne
 google-generativeai==0.8.3
+google-genai
 Pillow
 twilio

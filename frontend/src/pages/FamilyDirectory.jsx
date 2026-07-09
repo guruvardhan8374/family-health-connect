@@ -18,6 +18,8 @@ export default function FamilyDirectory() {
   const [invitations, setInvitations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [joinError, setJoinError] = useState('');
   
   // Modals & Forms
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -139,30 +141,34 @@ export default function FamilyDirectory() {
     e.preventDefault();
     if (!newGroupName.trim()) return;
     setSubmitting(true);
+    setCreateError('');
     try {
       const res = await api.post('/family/groups/', {
-        name: newGroupName,
-        description: newGroupDesc
+        name: newGroupName.trim(),
+        description: newGroupDesc.trim()
       });
       const createdGroup = res.data;
       setNewGroupName('');
       setNewGroupDesc('');
       setShowCreateModal(false);
       await fetchData();
-      // Show the family code in a modal — done after fetchData so state is settled
       if (createdGroup?.family_code) {
         setNewGroupCode({ code: createdGroup.family_code, name: createdGroup.name });
         setShowCodeModal(true);
       }
     } catch (err) {
-      console.error(err);
+      console.error('Create group error:', err);
       if (err.response?.status === 401) {
-        alert('Your session has expired. Please log in again.');
-        window.location.href = '/login';
+        setCreateError('Your session expired. Please log in again.');
+        setTimeout(() => { window.location.href = '/login'; }, 1500);
         return;
       }
-      const msg = getErrorMessage(err, 'Failed to create Family Circle');
-      if (msg) alert(msg);
+      const data = err.response?.data;
+      if (data?.name?.length)        setCreateError(`Name: ${data.name[0]}`);
+      else if (data?.detail)         setCreateError(data.detail);
+      else if (data?.error)          setCreateError(data.error);
+      else if (!err.response)        setCreateError('Server unreachable. Please check your connection.');
+      else                           setCreateError('Failed to create Family Circle. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -172,6 +178,7 @@ export default function FamilyDirectory() {
     e.preventDefault();
     if (!joinCode.trim()) return;
     setSubmitting(true);
+    setJoinError('');
     try {
       const res = await api.post('/family/groups/join-by-code/', {
         family_code: joinCode.trim().toUpperCase(),
@@ -181,12 +188,20 @@ export default function FamilyDirectory() {
       setJoinLabel('OTHER');
       setShowJoinModal(false);
       await fetchData();
-      const msg = res.data?.message || res.data?.detail || "Join request submitted successfully!";
+      const msg = res.data?.message || 'Join request submitted successfully!';
       alert(msg);
     } catch (err) {
-      console.error(err);
-      const msg = getErrorMessage(err, "Invalid family code or failed to submit request");
-      if (msg) alert(msg);
+      console.error('Join by code error:', err);
+      if (err.response?.status === 401) {
+        setJoinError('Your session expired. Please log in again.');
+        setTimeout(() => { window.location.href = '/login'; }, 1500);
+        return;
+      }
+      const data = err.response?.data;
+      if (data?.error)        setJoinError(data.error);
+      else if (data?.detail)  setJoinError(data.detail);
+      else if (!err.response) setJoinError('Server unreachable. Please check your connection.');
+      else                    setJoinError('Invalid code or failed to submit request.');
     } finally {
       setSubmitting(false);
     }
@@ -358,7 +373,12 @@ export default function FamilyDirectory() {
                     className="w-full bg-navy-50/50 border border-navy-100 rounded-2xl py-3 px-4 text-sm text-navy-950 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none transition-all resize-none"
                   />
                 </div>
-                <button type="submit" className="w-full mt-2 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-lg shadow-emerald-500/20">
+                {createError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs font-semibold">
+                    {createError}
+                  </div>
+                )}
+                <button type="submit" disabled={submitting} className="w-full mt-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-lg shadow-emerald-500/20">
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Launch Family Circle</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
@@ -401,7 +421,12 @@ export default function FamilyDirectory() {
                     <option value="OTHER">Other</option>
                   </select>
                 </div>
-                <button type="submit" className="w-full mt-2 bg-brand-500 hover:bg-brand-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-lg shadow-brand-500/20">
+                {joinError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs font-semibold">
+                    {joinError}
+                  </div>
+                )}
+                <button type="submit" disabled={submitting} className="w-full mt-2 bg-brand-500 hover:bg-brand-600 disabled:opacity-60 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-lg shadow-brand-500/20">
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Send Join Request</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
@@ -837,7 +862,12 @@ export default function FamilyDirectory() {
                     className="w-full bg-navy-50/50 border border-navy-100 rounded-2xl py-3 px-4 text-sm text-navy-950 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none transition-all resize-none"
                   />
                 </div>
-                <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-md">
+                {createError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs font-semibold">
+                    {createError}
+                  </div>
+                )}
+                <button type="submit" disabled={submitting} className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-md">
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Create Circle</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
@@ -884,7 +914,12 @@ export default function FamilyDirectory() {
                     <option value="OTHER">Other</option>
                   </select>
                 </div>
-                <button type="submit" className="w-full bg-brand-500 hover:bg-brand-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-md">
+                {joinError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs font-semibold">
+                    {joinError}
+                  </div>
+                )}
+                <button type="submit" disabled={submitting} className="w-full bg-brand-500 hover:bg-brand-600 disabled:opacity-60 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-md">
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Send Join Request</span><ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>

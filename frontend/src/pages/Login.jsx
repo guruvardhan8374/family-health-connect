@@ -95,6 +95,24 @@ export default function Login() {
         setError('Server is unreachable. Please wait a moment and try again — the server may be waking up.');
       } else if (err.response.status === 401) {
         setError('Incorrect username/email or password. Please check and try again.');
+      } else if (err.response.status === 400) {
+        // SimpleJWT returns errors in non_field_errors or detail or as object
+        const data = err.response.data;
+        if (data?.non_field_errors?.length) {
+          setError(data.non_field_errors[0]);
+        } else if (data?.detail) {
+          setError(data.detail);
+        } else if (data?.username?.length) {
+          setError(data.username[0]);
+        } else if (data?.password?.length) {
+          setError(data.password[0]);
+        } else if (typeof data === 'string') {
+          setError(data);
+        } else {
+          // Flatten any remaining field errors
+          const msgs = Object.values(data).flat();
+          setError(msgs.length ? msgs[0] : 'Login failed. Please check your credentials.');
+        }
       } else if (err.response.status === 429) {
         setError('Too many login attempts. Please wait a few minutes before trying again.');
       } else {

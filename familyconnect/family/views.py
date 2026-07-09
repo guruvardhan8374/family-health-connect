@@ -34,20 +34,35 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         code = generate_family_code()
-        # Ensure code uniqueness
         while FamilyGroup.objects.filter(family_code=code).exists():
             code = generate_family_code()
-            
         group = serializer.save(created_by=self.request.user, family_code=code)
-        
-        # Auto-add creator as admin member
-        FamilyMembership.objects.create(
-            user=self.request.user, 
-            family_group=group, 
-            is_admin=True, 
-            is_approved=True,
-            label='PARENT'
-        )
+        try:
+            FamilyMembership.objects.create(
+                user=self.request.user,
+                family_group=group,
+                is_admin=True,
+                is_approved=True,
+                label='PARENT'
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to create admin membership: {e}")
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        # Re-fetch with annotation so member_count is always present
+        group = FamilyGroup.objects.annotate(
+            member_count=Count('memberships')
+        ).get(pk=serializer.instance.pk)
+        response_serializer = self.get_serializer(group)
+        return Response({
+            'success': True,
+            'message': 'Family Circle created successfully!',
+            **response_serializer.data
+        }, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='join-by-code')
     def join_by_code(self, request):

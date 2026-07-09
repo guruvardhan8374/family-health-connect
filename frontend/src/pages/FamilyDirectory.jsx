@@ -41,6 +41,12 @@ export default function FamilyDirectory() {
 
   const fetchData = async () => {
     try {
+      // Check token exists before making any request
+      const token = localStorage.getItem('access_token');
+      if (!token) {
+        window.location.href = '/login';
+        return;
+      }
       // 1. Fetch family groups the user is part of
       const groupsRes = await api.get('/family/groups/');
       const fetchedGroups = groupsRes.data.results || groupsRes.data || [];
@@ -150,11 +156,17 @@ export default function FamilyDirectory() {
       }
     } catch (err) {
       console.error(err);
-      const msg = getErrorMessage(err, "Failed to create Family Circle");
+      if (err.response?.status === 401) {
+        alert('Your session has expired. Please log in again.');
+        window.location.href = '/login';
+        return;
+      }
+      const msg = getErrorMessage(err, 'Failed to create Family Circle');
       if (msg) alert(msg);
     } finally {
       setSubmitting(false);
     }
+  };
   };
 
   const handleJoinByCode = async (e) => {

@@ -170,10 +170,12 @@ export default function FamilyDirectory() {
       setJoinLabel('OTHER');
       setShowJoinModal(false);
       await fetchData();
-      alert(res.data.message || "Request submitted successfully!");
+      const msg = res.data?.message || res.data?.detail || "Join request submitted successfully!";
+      alert(msg);
     } catch (err) {
       console.error(err);
-      alert(getErrorMessage(err, "Invalid family code or failed to submit request"));
+      const msg = getErrorMessage(err, "Invalid family code or failed to submit request");
+      if (msg) alert(msg);
     } finally {
       setSubmitting(false);
     }

@@ -76,23 +76,26 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
 
         if not created:
             if membership.is_approved:
-                return Response({"message": "You are already a member of this family group"}, status=status.HTTP_200_OK)
-            return Response({"message": "Your request to join this family group is already pending approval"}, status=status.HTTP_200_OK)
+                return Response({"message": "You are already a member of this family group."}, status=status.HTTP_200_OK)
+            return Response({"message": "Your join request is already pending admin approval."}, status=status.HTTP_200_OK)
 
         # Notify family admins of the join request
-        from notifications.services import create_notification
-        admins = FamilyMembership.objects.filter(family_group=group, is_admin=True, is_approved=True)
-        for admin in admins:
-            create_notification(
-                user=admin.user,
-                type='SYSTEM',
-                title='New Join Request',
-                message=f"{request.user.username} requested to join '{group.name}' using code.",
-                priority='NORMAL'
-            )
+        try:
+            from notifications.services import create_notification
+            admins = FamilyMembership.objects.filter(family_group=group, is_admin=True, is_approved=True)
+            for admin in admins:
+                create_notification(
+                    user=admin.user,
+                    type='SYSTEM',
+                    title='New Join Request',
+                    message=f"{request.user.username} requested to join '{group.name}' using code.",
+                    priority='NORMAL'
+                )
+        except Exception:
+            pass
 
         return Response({
-            "message": "Join request submitted. A family admin must approve your request.",
+            "message": f"Join request submitted successfully! An admin of '{group.name}' must approve your request.",
             "membership": FamilyMembershipSerializer(membership).data
         }, status=status.HTTP_201_CREATED)
 

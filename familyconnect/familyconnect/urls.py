@@ -16,28 +16,31 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.http import JsonResponse
 from users.views import SecureTokenObtainPairView
-from rest_framework_simplejwt.views import (
-    TokenRefreshView,
-)
+from rest_framework_simplejwt.views import TokenRefreshView
 from drf_spectacular.views import (
     SpectacularAPIView,
-    SpectacularRedocView,
     SpectacularSwaggerView,
+    SpectacularRedocView,
 )
+
+def health_check(request):
+    return JsonResponse({"status": "ok"})
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/health/', health_check, name='health-check'),
     path('api/token/', SecureTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/v1/token/', SecureTokenObtainPairView.as_view(), name='token_obtain_pair_v1'),
     path('api/v1/token/refresh/', TokenRefreshView.as_view(), name='token_refresh_v1'),
-    
+
     # API schema & docs
     path('api/v1/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/v1/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/v1/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
-    
+
     # App URLs
     path('api/v1/users/', include('users.urls')),
     path('api/v1/family/', include('family.urls')),

@@ -7,6 +7,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 60000, // 60 seconds — handles Render cold start wakeup
 });
 
 let isRefreshing = false;

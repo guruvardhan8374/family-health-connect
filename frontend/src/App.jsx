@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
 import HealthHub from './pages/HealthHub';
@@ -23,10 +24,20 @@ const ProtectedRoute = ({ children }) => {
   return children;
 };
 
+// Wake up Render backend on app load (free tier spins down after inactivity)
+function ServerWakeUp() {
+  useEffect(() => {
+    const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+    fetch(`${apiBaseUrl}/api/health/`, { method: 'GET' }).catch(() => {});
+  }, []);
+  return null;
+}
+
 function App() {
   return (
     <AuthProvider>
       <SyncProvider>
+        <ServerWakeUp />
         <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />

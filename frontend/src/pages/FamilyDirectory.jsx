@@ -158,17 +158,17 @@ export default function FamilyDirectory() {
       }
     } catch (err) {
       console.error('Create group error:', err);
-      if (err.response?.status === 401) {
-        setCreateError('Your session expired. Please log in again.');
-        setTimeout(() => { window.location.href = '/login'; }, 1500);
-        return;
-      }
+      // Do NOT handle 401 here — api.js interceptor already silently
+      // refreshes the token and retries. If refresh also fails, the
+      // interceptor redirects to /login automatically.
+      // Only handle actual API errors here.
+      if (err.response?.status === 401) return; // interceptor handles this
       const data = err.response?.data;
-      if (data?.name?.length)        setCreateError(`Name: ${data.name[0]}`);
-      else if (data?.detail)         setCreateError(data.detail);
-      else if (data?.error)          setCreateError(data.error);
-      else if (!err.response)        setCreateError('Server unreachable. Please check your connection.');
-      else                           setCreateError('Failed to create Family Circle. Please try again.');
+      if (data?.name?.length)   setCreateError(`Name: ${data.name[0]}`);
+      else if (data?.detail)    setCreateError(data.detail);
+      else if (data?.error)     setCreateError(data.error);
+      else if (!err.response)   setCreateError('Server unreachable. Please check your connection.');
+      else                      setCreateError('Failed to create Family Circle. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -192,11 +192,8 @@ export default function FamilyDirectory() {
       alert(msg);
     } catch (err) {
       console.error('Join by code error:', err);
-      if (err.response?.status === 401) {
-        setJoinError('Your session expired. Please log in again.');
-        setTimeout(() => { window.location.href = '/login'; }, 1500);
-        return;
-      }
+      // Let interceptor handle 401 — it refreshes token and retries automatically
+      if (err.response?.status === 401) return;
       const data = err.response?.data;
       if (data?.error)        setJoinError(data.error);
       else if (data?.detail)  setJoinError(data.detail);

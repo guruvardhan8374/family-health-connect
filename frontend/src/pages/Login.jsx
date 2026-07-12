@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { HeartPulse, Mail, Lock, ArrowRight, Loader2, Eye, EyeOff, Wifi, WifiOff } from 'lucide-react';
+import { HeartPulse, Mail, Lock, ArrowRight, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
 import api from '../utils/api';
 import { signInWithGoogle } from '../utils/firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -14,9 +14,19 @@ export default function Login() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const [serverStatus, setServerStatus] = useState('checking'); // 'checking' | 'online' | 'waking'
+  const [sessionBanner, setSessionBanner] = useState(''); // 'session_expired' | ''
 
   const navigate = useNavigate();
   const { login } = useAuth();
+
+  // ── Read session redirect reason (set by api.js interceptor) ────────────
+  useEffect(() => {
+    const reason = sessionStorage.getItem('auth_redirect_reason');
+    if (reason === 'session_expired') {
+      setSessionBanner('session_expired');
+      sessionStorage.removeItem('auth_redirect_reason');
+    }
+  }, []);
 
   // Ping backend on mount to check/wake server
   useEffect(() => {
@@ -163,6 +173,13 @@ export default function Login() {
         )}
 
         <div className="bg-white/10 backdrop-blur-xl border border-white/10 p-8 rounded-[2rem] shadow-2xl">
+          {/* Session expired banner — shown when interceptor redirects here */}
+          {sessionBanner === 'session_expired' && (
+            <div className="mb-6 p-4 bg-amber-500/20 border border-amber-500/50 rounded-xl text-amber-200 text-sm flex items-start space-x-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>Your session has expired. Please sign in again to continue.</span>
+            </div>
+          )}
           {error && (
             <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-xl text-red-200 text-sm flex items-start space-x-2">
               <WifiOff className="w-4 h-4 mt-0.5 shrink-0" />

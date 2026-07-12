@@ -1,6 +1,7 @@
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate
 
 User = get_user_model()
 
@@ -44,6 +45,16 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
             raise serializers.ValidationError(
                 'This account has been deactivated. Please contact support.'
             )
+
+        # Authenticate manually to provide clearer error for wrong password
+        user = authenticate(username=attrs['username'], password=password)
+        if not user:
+            raise serializers.ValidationError('Invalid password.')
+
+        # Mark user as verified on successful login
+        if hasattr(user, 'is_otp_verified') and not user.is_otp_verified:
+            user.is_otp_verified = True
+            user.save(update_fields=['is_otp_verified'])
 
         # Parent handles password check and token generation
         data = super().validate(attrs)

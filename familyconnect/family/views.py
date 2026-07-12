@@ -33,22 +33,47 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
         ).annotate(member_count=Count('memberships')).distinct().order_by('-created_at')
 
     def perform_create(self, serializer):
+        import logging
+        logger = logging.getLogger(__name__)
+
         code = generate_family_code()
         while FamilyGroup.objects.filter(family_code=code).exists():
             code = generate_family_code()
         group = serializer.save(created_by=self.request.user, family_code=code)
+
+        # Create the creator's membership as Family Head (admin + approved).
+        # Use get_or_create so that a double-submit or a retry after token refresh
+        # does not raise IntegrityError on the unique_together(user, family_group)
+        # constraint and falsely tell the user "already exists".
         try:
-            FamilyMembership.objects.create(
+            membership, _ = FamilyMembership.objects.get_or_create(
                 user=self.request.user,
                 family_group=group,
-                is_admin=True,
-                is_approved=True,
-                label='HEAD',
-                status='ACTIVE'
+                defaults={
+                    'is_admin': True,
+                    'is_approved': True,
+                    'label': 'HEAD',
+                    'status': 'ACTIVE',
+                }
             )
+            # Ensure the creator always ends up as admin, even if row existed
+            if not membership.is_admin or not membership.is_approved:
+                membership.is_admin = True
+                membership.is_approved = True
+                membership.label = 'HEAD'
+                membership.status = 'ACTIVE'
+                membership.save(update_fields=['is_admin', 'is_approved', 'label', 'status'])
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to create HEAD membership: {e}")
+            logger.error(f"Failed to create HEAD membership for user {self.request.user.id}: {e}")
+
+        # Promote user's system role to HEAD if they are currently a plain MEMBER
+        try:
+            user = self.request.user
+            if user.role == 'MEMBER':
+                user.role = 'HEAD'
+                user.save(update_fields=['role'])
+        except Exception as e:
+            logger.error(f"Failed to update user role to HEAD: {e}")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

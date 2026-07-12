@@ -16,17 +16,36 @@ const processQueue = (error, token = null) => {
   failedQueue = [];
 };
 
-export const clearAuthAndRedirect = () => {
+export const clearAuthAndRedirect = (reason = 'session_expired') => {
   ['access_token','refresh_token','user_id','username','email','role','auth_provider']
     .forEach(k => localStorage.removeItem(k));
+  // Set a flag so the Login page can show an appropriate message
+  if (reason) {
+    sessionStorage.setItem('auth_redirect_reason', reason);
+  }
   window.location.href = '/login';
 };
 
-// ── Attach Bearer token to every outgoing request ──────────────────────────
+// ── Attach Bearer token to every outgoing request (except public/auth endpoints) ──
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
+    const url = config.url || '';
+    // Do not send Authorization headers for public endpoints. If an expired/invalid token
+    // is sent, Django's JWTAuthentication will fail the request with 401 "Given token not valid",
+    // even if the endpoint has AllowAny permission.
+    const isPublic = 
+      url.includes('/token/') || 
+      url.includes('/register/') || 
+      url.includes('/verify-otp/') || 
+      url.includes('/password-reset/') ||
+      url.includes('/verify-phone-otp/') ||
+      url.includes('/send-phone-otp/') ||
+      url.includes('/health/');
+
+    if (!isPublic) {
+      const token = localStorage.getItem('access_token');
+      if (token) config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => Promise.reject(error)
@@ -41,28 +60,49 @@ api.interceptors.response.use(
     const errorCode   = error.response?.data?.code   || '';
     const errorDetail = error.response?.data?.detail || '';
 
-    // Never try to refresh for Google-auth users
+    // Never try to refresh for Google-auth users — their Firebase tokens
+    // expire and must be re-obtained via Google sign-in, not refresh endpoint
     if (localStorage.getItem('auth_provider') === 'google') {
       return Promise.reject(error);
     }
 
-    // Only intercept 401 once per request
+    // Skip the interceptor for public/auth endpoints — a 401 there should be handled
+    // directly by the component calling it, not by trying to refresh tokens.
+    const url = originalRequest?.url || '';
+    const isPublic = 
+      url.includes('/token/') || 
+      url.includes('/register/') || 
+      url.includes('/verify-otp/') || 
+      url.includes('/password-reset/') ||
+      url.includes('/verify-phone-otp/') ||
+      url.includes('/send-phone-otp/') ||
+      url.includes('/health/');
+
+    if (isPublic) {
+      return Promise.reject(error);
+    }
+
+    // Only intercept 401 once per request (prevent infinite retry loops)
     if (status !== 401 || originalRequest._retry) {
       return Promise.reject(error);
     }
 
-    // Detect completely invalid tokens (bad signature, wrong type, etc.)
-    const isHardInvalid =
-      errorCode   === 'token_not_valid'  ||
-      errorCode   === 'user_not_found'   ||
-      errorDetail.includes('token_not_valid') ||
-      errorDetail.includes('not valid');
+    // Detect if the user account was deleted or disabled
+    const isHardInvalid = errorCode === 'user_not_found';
+
+    if (isHardInvalid) {
+      // User doesn't exist — no point refreshing, force re-login immediately
+      isRefreshing = false;
+      processQueue(error, null);
+      clearAuthAndRedirect('session_expired');
+      return Promise.reject(error);
+    }
 
     const refreshToken = localStorage.getItem('refresh_token');
 
     // No refresh token stored — can't recover, force login
     if (!refreshToken) {
-      clearAuthAndRedirect();
+      clearAuthAndRedirect('session_expired');
       return Promise.reject(error);
     }
 
@@ -87,6 +127,7 @@ api.interceptors.response.use(
       );
       const newAccess = res.data.access;
       localStorage.setItem('access_token', newAccess);
+      // ROTATE_REFRESH_TOKENS=True in Django means a new refresh token is issued
       if (res.data.refresh) localStorage.setItem('refresh_token', res.data.refresh);
 
       api.defaults.headers.common['Authorization'] = `Bearer ${newAccess}`;
@@ -94,13 +135,14 @@ api.interceptors.response.use(
 
       processQueue(null, newAccess);
       isRefreshing = false;
+      // Retry the original request with the new access token
       return api(originalRequest);
 
     } catch (refreshError) {
-      // Refresh failed (token truly expired / revoked) — force re-login
+      // Refresh failed (refresh token is also expired / revoked) — force re-login
       processQueue(refreshError, null);
       isRefreshing = false;
-      clearAuthAndRedirect();
+      clearAuthAndRedirect('session_expired');
       return Promise.reject(refreshError);
     }
   }

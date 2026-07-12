@@ -41,7 +41,12 @@ export function AuthProvider({ children }) {
       setUser(profile);
     } catch (err) {
       if (err.response?.status === 401) {
-        // Token invalid — interceptor already called clearAuthAndRedirect
+        // Token invalid — the api.js interceptor will already have:
+        // 1. Tried to refresh the token (if refresh token exists)
+        // 2. Either retried and succeeded (in which case this catch won't run)
+        //    OR called clearAuthAndRedirect (which navigates away)
+        // We only land here if the interceptor re-threw the error after redirect.
+        // Safely set user to null without double-redirecting.
         setUser(null);
       } else {
         // Network error (Render cold start) — serve cached user so UI doesn't flash logout
@@ -64,12 +69,15 @@ export function AuthProvider({ children }) {
   // ── Called immediately after a successful login API response ─────────────
   // Returns a Promise so callers can await it before navigating
   const login = useCallback((tokenData) => {
+    // Store tokens FIRST — synchronously — before any async calls
     localStorage.setItem('access_token',  tokenData.access);
     localStorage.setItem('refresh_token', tokenData.refresh);
     if (tokenData.user_id)  localStorage.setItem('user_id',  tokenData.user_id.toString());
     if (tokenData.username) localStorage.setItem('username', tokenData.username);
     if (tokenData.email)    localStorage.setItem('email',    tokenData.email);
     if (tokenData.role)     localStorage.setItem('role',     tokenData.role);
+    // Clear any stale session-expired flag from a prior logout
+    sessionStorage.removeItem('auth_redirect_reason');
     return loadUser(); // returns the promise — callers can await
   }, [loadUser]);
 

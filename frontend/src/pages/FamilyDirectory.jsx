@@ -43,12 +43,6 @@ export default function FamilyDirectory() {
 
   const fetchData = async () => {
     try {
-      // Check token exists before making any request
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        window.location.href = '/login';
-        return;
-      }
       // 1. Fetch family groups the user is part of
       const groupsRes = await api.get('/family/groups/');
       const fetchedGroups = groupsRes.data.results || groupsRes.data || [];
@@ -70,7 +64,11 @@ export default function FamilyDirectory() {
         setInvitations(invitesRes.data.results || invitesRes.data || []);
       }
     } catch (err) {
-      console.error('Failed to fetch family circle details:', err);
+      // 401 errors are handled silently by api.js interceptor (auto-refresh + retry,
+      // or redirect to /login if refresh also fails). Only log other errors.
+      if (err.response?.status !== 401) {
+        console.error('Failed to fetch family circle details:', err);
+      }
     } finally {
       setLoading(false);
     }

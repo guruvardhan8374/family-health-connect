@@ -1,104 +1,189 @@
 import { useState, useEffect, useCallback } from 'react';
-import api from "../utils/api";
+import api from '../utils/api';
 import { useSyncEvent } from '../contexts/SyncContext';
+import useHealthWebSocket from '../hooks/useHealthWebSocket';
+import CircularProgress from '../components/CircularProgress';
 import { 
   Activity, Heart, Droplets, Moon, Flame, Wind, 
   Brain, Zap, Plus, ArrowUpRight, ArrowDownRight,
-  ChevronRight, Calendar, RefreshCw
+  ChevronRight, Calendar, RefreshCw, AlertTriangle, User,
+  PlusCircle
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, 
   Tooltip, ResponsiveContainer, BarChart, Bar, Cell
 } from 'recharts';
 
-const dailyData = [
-  { time: '12am', heart: 62, steps: 0, oxygen: 98 },
-  { time: '4am', heart: 58, steps: 0, oxygen: 99 },
-  { time: '8am', heart: 75, steps: 1200, oxygen: 98 },
-  { time: '12pm', heart: 82, steps: 3500, oxygen: 97 },
-  { time: '4pm', heart: 88, steps: 5800, oxygen: 98 },
-  { time: '8pm', heart: 72, steps: 8432, oxygen: 99 },
-  { time: '11pm', heart: 65, steps: 8432, oxygen: 98 },
-];
-
-const weeklyData = [
-  { day: 'Mon', steps: 6500, sleep: 7.5 },
-  { day: 'Tue', steps: 8200, sleep: 6.8 },
-  { day: 'Wed', steps: 9100, sleep: 8.2 },
-  { day: 'Thu', steps: 7400, sleep: 7.1 },
-  { day: 'Fri', steps: 10500, sleep: 7.9 },
-  { day: 'Sat', steps: 12000, sleep: 9.0 },
-  { day: 'Sun', steps: 8432, sleep: 8.5 },
-];
-
-const familyMembers = [
-  { id: 1, name: 'Pravi', avatar: 'https://i.pravatar.cc/150?u=pravi' },
-  { id: 2, name: 'Mom', avatar: 'https://i.pravatar.cc/150?u=mom' },
-  { id: 3, name: 'Dad', avatar: 'https://i.pravatar.cc/150?u=dad' },
-];
-
-const MetricCard = ({ title, value, unit, icon: Icon, color, trend, trendValue }) => (
-  <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-navy-100 shadow-sm hover:shadow-xl hover:translate-y-[-4px] transition-all duration-300 group">
-    <div className="flex justify-between items-start mb-4">
-      <div className={`p-3 rounded-2xl ${color} bg-opacity-10 group-hover:scale-110 transition-transform`}>
-        <Icon className={`w-6 h-6 ${color.replace('bg-', 'text-')}`} />
-      </div>
-      {trend && (
-        <div className={`flex items-center px-2 py-1 rounded-full text-xs font-bold ${trend === 'up' ? 'text-emerald-500 bg-emerald-50' : 'text-red-500 bg-red-50'}`}>
-          {trend === 'up' ? <ArrowUpRight className="w-3 h-3 mr-1" /> : <ArrowDownRight className="w-3 h-3 mr-1" />}
-          {trendValue}%
-        </div>
-      )}
-    </div>
-    <p className="text-navy-500 text-sm font-medium">{title}</p>
-    <div className="mt-1 flex items-baseline space-x-1">
-      <h3 className="text-2xl font-bold text-navy-900">{value}</h3>
-      <span className="text-navy-400 text-sm font-medium">{unit}</span>
-    </div>
-  </div>
-);
 export default function HealthHub() {
-  const [healthData, setHealthData] = useState(null);
   const [timeRange, setTimeRange] = useState('Daily');
-  const [selectedMember, setSelectedMember] = useState(null);
+  const [familyData, setFamilyData] = useState([]);
+  const [selectedMemberId, setSelectedMemberId] = useState(null);
   const [syncFlash, setSyncFlash] = useState(false);
+  const [summaryData, setSummaryData] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [showGoalModal, setShowGoalModal] = useState(false);
 
-  const fetchHealthData = useCallback(async () => {
+  // Goal Form Fields
+  const [stepsGoal, setStepsGoal] = useState(10000);
+  const [caloriesGoal, setCaloriesGoal] = useState(2000);
+  const [hydrationGoal, setHydrationGoal] = useState(2.0);
+  const [sleepGoal, setSleepGoal] = useState(8.0);
+  const [distanceGoal, setDistanceGoal] = useState(5.0);
+
+  const fetchFamilySummary = useCallback(async () => {
     try {
-      const response = await api.get('/health-records/');
-      if (response.data.length > 0) {
-        setHealthData(response.data[0]);
+      const res = await api.get('/health/family-summary/');
+      setFamilyData(res.data || []);
+      // If no member is selected, select the current user by default if found
+      if (res.data && res.data.length > 0 && !selectedMemberId) {
+        setSelectedMemberId(res.data[0].user_id);
       }
-    } catch (error) {
-      console.error("Health fetch failed", error);
+    } catch (err) {
+      console.error('Failed to fetch family health summary:', err);
     }
-  }, []);
+  }, [selectedMemberId]);
+
+  const fetchHealthSummary = useCallback(async () => {
+    try {
+      const res = await api.get(`/health/summary/?range=${timeRange}`);
+      setSummaryData(res.data);
+      if (res.data?.goal) {
+        setStepsGoal(res.data.goal.steps_goal);
+        setCaloriesGoal(res.data.goal.calories_goal);
+        setHydrationGoal(res.data.goal.hydration_goal);
+        setSleepGoal(res.data.goal.sleep_goal);
+        setDistanceGoal(res.data.goal.distance_goal);
+      }
+      if (res.data?.active_alerts) {
+        setAlerts(res.data.active_alerts);
+      }
+    } catch (err) {
+      console.error('Failed to fetch health summary:', err);
+    }
+  }, [timeRange]);
 
   useEffect(() => {
-    fetchHealthData();
-  }, [fetchHealthData]);
+    fetchFamilySummary();
+  }, [fetchFamilySummary]);
 
-  // ── Real-time sync: new health record added on mobile ──────────────────
-  useSyncEvent('health.update', () => {
+  useEffect(() => {
+    fetchHealthSummary();
+  }, [fetchHealthSummary]);
+
+  // Real-time synchronization
+  const handleVitalsUpdate = (snapshot) => {
     setSyncFlash(true);
-    fetchHealthData();
     setTimeout(() => setSyncFlash(false), 2500);
-  }, [fetchHealthData]);
+    // Reload data on live updates
+    fetchFamilySummary();
+    fetchHealthSummary();
+  };
+
+  const handleAlertUpdate = (newAlerts) => {
+    setAlerts(newAlerts);
+  };
+
+  useHealthWebSocket(handleVitalsUpdate, handleAlertUpdate);
+
+  // Sync event from sync context
+  useSyncEvent('health.update', () => {
+    handleVitalsUpdate();
+  }, [fetchFamilySummary, fetchHealthSummary]);
+
+  // Save Goal changes
+  const handleSaveGoals = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/health/goals/', {
+        steps_goal: stepsGoal,
+        calories_goal: caloriesGoal,
+        hydration_goal: hydrationGoal,
+        sleep_goal: sleepGoal,
+        distance_goal: distanceGoal,
+      });
+      setShowGoalModal(false);
+      fetchHealthSummary();
+    } catch (err) {
+      console.error('Failed to update goals:', err);
+    }
+  };
+
+  const selectedMemberData = familyData.find(m => m.user_id === selectedMemberId);
+
+  // Compute selected member vitals
+  const displayVitals = selectedMemberData?.latest_snapshot || {};
+  const currentUserId = parseInt(localStorage.getItem('user_id') || '0');
+  const isSelf = selectedMemberId === currentUserId;
+
+  // Use summaryData for trending charts of self, otherwise use basic metrics
+  const activeVitals = {
+    heartRate: isSelf ? (summaryData?.latest_heart_rate ?? displayVitals.heart_rate ?? '--') : (displayVitals.heart_rate ?? '--'),
+    steps: isSelf ? (summaryData?.today_steps ?? displayVitals.steps ?? 0) : (displayVitals.steps ?? 0),
+    oxygen: isSelf ? (summaryData?.latest_spo2 ?? displayVitals.spo2 ?? '--') : (displayVitals.spo2 ?? '--'),
+    sleep: isSelf ? (summaryData?.today_sleep ?? displayVitals.sleep_hours ?? '--') : (displayVitals.sleep_hours ?? '--'),
+    calories: isSelf ? (summaryData?.today_calories ?? displayVitals.calories ?? 0) : (displayVitals.calories ?? 0),
+    hydration: isSelf ? (summaryData?.today_hydration ?? displayVitals.hydration ?? '--') : (displayVitals.hydration ?? '--'),
+    bmi: isSelf ? (summaryData?.latest_bmi ?? displayVitals.bmi ?? '--') : (displayVitals.bmi ?? '--'),
+    distance: isSelf ? (summaryData?.today_distance ?? displayVitals.distance ?? '--') : (displayVitals.distance ?? '--'),
+    bloodPressure: displayVitals.blood_pressure || '--',
+  };
+
+  // Convert chart details
+  const heartRateChartData = summaryData?.heart_rate?.map((hr, idx) => ({
+    time: summaryData.labels[idx] || '',
+    heart: hr || 70,
+  })) || [];
+
+  const stepsChartData = summaryData?.steps?.map((st, idx) => ({
+    label: summaryData.labels[idx] || '',
+    steps: st || 0,
+  })) || [];
+
+  const activeAlerts = alerts.filter(a => !a.is_read);
+
+  const markAllAlertsRead = async () => {
+    try {
+      await api.post('/health/alerts/mark-all-read/');
+      setAlerts([]);
+    } catch (err) {
+      console.error('Failed to clear alerts:', err);
+    }
+  };
 
   return (
     <div className="space-y-8 pb-12">
-      {/* Sync flash banner */}
+      {/* Real-time Sync Banner */}
       {syncFlash && (
-        <div className="fixed top-20 right-6 z-50 flex items-center gap-2 bg-brand-500 text-white px-5 py-3 rounded-2xl shadow-xl animate-slide-in">
+        <div className="fixed top-20 right-6 z-50 flex items-center gap-2 bg-emerald-500 text-white px-5 py-3 rounded-2xl shadow-xl animate-bounce">
           <RefreshCw className="w-4 h-4 animate-spin" />
-          <span className="text-sm font-bold">Health data updated from mobile</span>
+          <span className="text-sm font-bold">Health sync updated live!</span>
         </div>
       )}
+
+      {/* Emergency Alert Banner */}
+      {activeAlerts.length > 0 && (
+        <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-[2rem] text-red-200 flex flex-col md:flex-row items-center justify-between gap-4 animate-pulse">
+          <div className="flex items-center space-x-3">
+            <AlertTriangle className="w-8 h-8 text-red-500 shrink-0" />
+            <div>
+              <h4 className="font-bold text-red-400">Critical Vitals Warning</h4>
+              <p className="text-sm text-red-300/80">{activeAlerts[0].message}</p>
+            </div>
+          </div>
+          <button 
+            onClick={markAllAlertsRead}
+            className="px-6 py-2 bg-red-500 text-white font-bold rounded-xl text-xs hover:bg-red-600 transition"
+          >
+            Acknowledge & Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Header Section */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-navy-900 tracking-tight">Health Insights</h1>
-          <p className="text-navy-500 mt-1">Deep dive into your family's health performance.</p>
+          <h1 className="text-3xl font-bold text-navy-900 tracking-tight">Health Hub</h1>
+          <p className="text-navy-500 mt-1">Real-time health insights and Google Fit synchronization.</p>
         </div>
         
         <div className="flex items-center space-x-3">
@@ -116,193 +201,331 @@ export default function HealthHub() {
             ))}
           </div>
           
-          <button className="p-3 bg-white border border-navy-100 rounded-2xl shadow-sm text-navy-500 hover:text-brand-500 transition-colors">
-            <Plus className="w-5 h-5" />
+          <button 
+            onClick={() => setShowGoalModal(true)}
+            className="flex items-center space-x-1 px-4 py-2 bg-white border border-navy-100 rounded-2xl shadow-sm text-navy-600 hover:text-brand-500 hover:border-brand-200 transition-all font-bold text-sm"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Set Goals</span>
           </button>
         </div>
       </header>
 
-      {/* Family Member Selector */}
+      {/* Family Member Switcher */}
       <div className="flex space-x-4 overflow-x-auto pb-2 scrollbar-hide">
-        {familyMembers.map((member) => (
+        {familyData.map((member) => (
           <button
-            key={member.id}
-            onClick={() => setSelectedMember(member)}
+            key={member.user_id}
+            onClick={() => setSelectedMemberId(member.user_id)}
             className={`flex items-center space-x-3 px-5 py-3 rounded-2xl border transition-all shrink-0 ${
-              selectedMember?.id === member.id
+              selectedMemberId === member.user_id
                 ? 'bg-brand-50 border-brand-200 shadow-sm' 
                 : 'bg-white border-navy-100 hover:border-brand-200'
             }`}
           >
-            <img src={member.avatar} alt={member.name} className="w-10 h-10 rounded-full border-2 border-white shadow-sm" />
-            <span className={`font-bold ${selectedMember?.id === member.id ? 'text-brand-600' : 'text-navy-900'}`}>{member.name}</span>
-            {selectedMember?.id === member.id && <div className="w-2 h-2 bg-brand-500 rounded-full"></div>}
+            <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center font-bold">
+              <User className="w-5 h-5" />
+            </div>
+            <div className="text-left">
+              <p className={`font-bold text-sm ${selectedMemberId === member.user_id ? 'text-brand-600' : 'text-navy-900'}`}>
+                {member.username} {member.user_id === currentUserId && '(You)'}
+              </p>
+              <p className="text-navy-400 text-xs">{member.label}</p>
+            </div>
           </button>
         ))}
       </div>
 
-      {/* Main Metrics Grid */}
+      {/* Main Google Fit-style Dashboard Vitals */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Heart Rate Card */}
+        <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-navy-100 shadow-sm flex items-center justify-between group hover:shadow-xl transition-all duration-300">
+          <div className="space-y-2">
+            <div className="p-3 rounded-2xl bg-red-500/10 text-red-500 w-fit group-hover:scale-110 transition-transform">
+              <Heart className="w-6 h-6" />
+            </div>
+            <p className="text-navy-500 text-sm font-medium">Heart Rate</p>
+            <div className="flex items-baseline space-x-1">
+              <h3 className="text-2xl font-bold text-navy-900">{activeVitals.heartRate}</h3>
+              <span className="text-navy-400 text-sm font-medium">bpm</span>
+            </div>
+          </div>
+          <CircularProgress 
+            value={activeVitals.heartRate !== '--' ? Math.min((activeVitals.heartRate / 100) * 100, 100) : 0} 
+            size={72} 
+            stroke={6}
+            color="#ef4444"
+            label={activeVitals.heartRate.toString()}
+            sublabel="bpm"
+          />
+        </div>
+
+        {/* Steps Card */}
+        <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-navy-100 shadow-sm flex items-center justify-between group hover:shadow-xl transition-all duration-300">
+          <div className="space-y-2">
+            <div className="p-3 rounded-2xl bg-brand-500/10 text-brand-500 w-fit group-hover:scale-110 transition-transform">
+              <Activity className="w-6 h-6" />
+            </div>
+            <p className="text-navy-500 text-sm font-medium">Daily Steps</p>
+            <div className="flex items-baseline space-x-1">
+              <h3 className="text-2xl font-bold text-navy-900">{activeVitals.steps.toLocaleString()}</h3>
+              <span className="text-navy-400 text-sm font-medium">/ {stepsGoal.toLocaleString()}</span>
+            </div>
+          </div>
+          <CircularProgress 
+            value={stepsGoal > 0 ? Math.min((activeVitals.steps / stepsGoal) * 100, 100) : 0} 
+            size={72} 
+            stroke={6}
+            color="#14b8a6"
+            label={Math.round((activeVitals.steps / stepsGoal) * 100 || 0).toString() + '%'}
+          />
+        </div>
+
+        {/* Blood Oxygen */}
+        <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-navy-100 shadow-sm flex items-center justify-between group hover:shadow-xl transition-all duration-300">
+          <div className="space-y-2">
+            <div className="p-3 rounded-2xl bg-blue-500/10 text-blue-500 w-fit group-hover:scale-110 transition-transform">
+              <Wind className="w-6 h-6" />
+            </div>
+            <p className="text-navy-500 text-sm font-medium">Oxygen (SpO₂)</p>
+            <div className="flex items-baseline space-x-1">
+              <h3 className="text-2xl font-bold text-navy-900">{activeVitals.oxygen}</h3>
+              <span className="text-navy-400 text-sm font-medium">%</span>
+            </div>
+          </div>
+          <CircularProgress 
+            value={activeVitals.oxygen !== '--' ? activeVitals.oxygen : 0} 
+            size={72} 
+            stroke={6}
+            color="#3b82f6"
+            label={activeVitals.oxygen.toString() + '%'}
+          />
+        </div>
+
+        {/* Sleep Duration */}
+        <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-navy-100 shadow-sm flex items-center justify-between group hover:shadow-xl transition-all duration-300">
+          <div className="space-y-2">
+            <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-500 w-fit group-hover:scale-110 transition-transform">
+              <Moon className="w-6 h-6" />
+            </div>
+            <p className="text-navy-500 text-sm font-medium">Sleep hours</p>
+            <div className="flex items-baseline space-x-1">
+              <h3 className="text-2xl font-bold text-navy-900">{activeVitals.sleep}</h3>
+              <span className="text-navy-400 text-sm font-medium">hrs</span>
+            </div>
+          </div>
+          <CircularProgress 
+            value={sleepGoal > 0 && activeVitals.sleep !== '--' ? Math.min((activeVitals.sleep / sleepGoal) * 100, 100) : 0} 
+            size={72} 
+            stroke={6}
+            color="#6366f1"
+            label={activeVitals.sleep.toString()}
+          />
+        </div>
+      </div>
+
+      {/* Other Metrics (Calories, Hydration, Weight/BMI, Distance) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard 
-          title="Heart Rate" 
-          value="72" 
-          unit="bpm" 
-          icon={Heart} 
-          color="bg-red-500" 
-          trend="up" 
-          trendValue="2.4" 
-        />
-        <MetricCard 
-          title="Daily Steps" 
-          value="8,432" 
-          unit="steps" 
-          icon={Activity} 
-          color="bg-brand-500" 
-          trend="up" 
-          trendValue="12" 
-        />
-        <MetricCard 
-          title="Oxygen Level" 
-          value="98" 
-          unit="%" 
-          icon={Wind} 
-          color="bg-blue-500" 
-          trend="down" 
-          trendValue="0.5" 
-        />
-        <MetricCard 
-          title="Sleep Quality" 
-          value="8.5" 
-          unit="hrs" 
-          icon={Moon} 
-          color="bg-indigo-500" 
-          trend="up" 
-          trendValue="8.1" 
-        />
-        <MetricCard 
-          title="Calories" 
-          value="1,840" 
-          unit="kcal" 
-          icon={Flame} 
-          color="bg-orange-500" 
-        />
-        <MetricCard 
-          title="Hydration" 
-          value="1.2" 
-          unit="L" 
-          icon={Droplets} 
-          color="bg-cyan-500" 
-        />
-        <MetricCard 
-          title="Stress Level" 
-          value="Low" 
-          unit="" 
-          icon={Brain} 
-          color="bg-purple-500" 
-        />
-        <MetricCard 
-          title="Blood Pressure" 
-          value="120/80" 
-          unit="mmHg" 
-          icon={Zap} 
-          color="bg-pink-500" 
-        />
+        <div className="bg-white p-6 rounded-[2rem] border border-navy-100 shadow-sm flex items-center space-x-4">
+          <div className="p-3 rounded-2xl bg-orange-500/10 text-orange-500">
+            <Flame className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-navy-400 text-xs">Calories Burned</p>
+            <p className="text-lg font-bold text-navy-900">{activeVitals.calories.toLocaleString()} kcal</p>
+            <p className="text-navy-400 text-xs">Goal: {caloriesGoal} kcal</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-[2rem] border border-navy-100 shadow-sm flex items-center space-x-4">
+          <div className="p-3 rounded-2xl bg-cyan-500/10 text-cyan-500">
+            <Droplets className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-navy-400 text-xs">Hydration</p>
+            <p className="text-lg font-bold text-navy-900">{activeVitals.hydration} L</p>
+            <p className="text-navy-400 text-xs">Goal: {hydrationGoal} L</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-[2rem] border border-navy-100 shadow-sm flex items-center space-x-4">
+          <div className="p-3 rounded-2xl bg-purple-500/10 text-purple-500">
+            <Brain className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-navy-400 text-xs">BMI & Weight</p>
+            <p className="text-lg font-bold text-navy-900">{activeVitals.bmi} BMI</p>
+            <p className="text-navy-400 text-xs">Weight: {selectedMemberData?.latest_snapshot?.weight || '--'} kg</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-[2rem] border border-navy-100 shadow-sm flex items-center space-x-4">
+          <div className="p-3 rounded-2xl bg-pink-500/10 text-pink-500">
+            <Zap className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-navy-400 text-xs">Distance Today</p>
+            <p className="text-lg font-bold text-navy-900">{activeVitals.distance} km</p>
+            <p className="text-navy-400 text-xs">Goal: {distanceGoal} km</p>
+          </div>
+        </div>
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Heart Rate Area Chart */}
-        <div className="bg-white p-8 rounded-[2.5rem] border border-navy-100 shadow-sm">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h3 className="text-xl font-bold text-navy-900">Heart Rate Trends</h3>
-              <p className="text-navy-500 text-sm">Average 72 bpm today</p>
+      {/* Real-time Charts Section (Only active/available for self due to summary detail) */}
+      {isSelf && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Heart Rate Area Chart */}
+          <div className="bg-white p-8 rounded-[2.5rem] border border-navy-100 shadow-sm">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h3 className="text-xl font-bold text-navy-900">Heart Rate Trends</h3>
+                <p className="text-navy-500 text-sm">Real-time dynamic heart rate tracking ({timeRange})</p>
+              </div>
             </div>
-            <button className="text-brand-600 font-bold text-sm flex items-center hover:translate-x-1 transition-transform">
-              Full Report <ChevronRight className="w-4 h-4 ml-1" />
-            </button>
-          </div>
-          
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={dailyData}>
-                <defs>
-                  <linearGradient id="heartGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
-                <YAxis hide />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
-                  itemStyle={{ fontWeight: 'bold' }}
-                />
-                <Area type="monotone" dataKey="heart" stroke="#ef4444" strokeWidth={4} fillOpacity={1} fill="url(#heartGradient)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Steps Bar Chart */}
-        <div className="bg-white p-8 rounded-[2.5rem] border border-navy-100 shadow-sm">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h3 className="text-xl font-bold text-navy-900">Weekly Activity</h3>
-              <p className="text-navy-500 text-sm">Target: 10,000 steps/day</p>
+            
+            <div className="h-72 w-full">
+              {heartRateChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={heartRateChartData}>
+                    <defs>
+                      <linearGradient id="heartGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
+                    <YAxis domain={['auto', 'auto']} axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dx={-10} />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
+                      itemStyle={{ fontWeight: 'bold' }}
+                    />
+                    <Area type="monotone" dataKey="heart" stroke="#ef4444" strokeWidth={4} fillOpacity={1} fill="url(#heartGradient)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-navy-400 text-sm">
+                  No chart data available for this range.
+                </div>
+              )}
             </div>
-            <button className="p-2 bg-navy-50 text-navy-500 rounded-xl hover:bg-navy-100 transition-colors">
-              <Calendar className="w-5 h-5" />
-            </button>
           </div>
-          
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={weeklyData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
-                <YAxis hide />
-                <Tooltip 
-                  cursor={{fill: '#f8fafc'}}
-                  contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
-                />
-                <Bar dataKey="steps" radius={[10, 10, 0, 0]}>
-                  {weeklyData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={index === 5 ? '#14b8a6' : '#ccfbf1'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
 
-      {/* Health Analytics Insight Card */}
-      <div className="bg-gradient-to-r from-navy-900 to-navy-800 p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-125 transition-transform duration-700">
-          <Brain className="w-48 h-48" />
-        </div>
-        <div className="relative z-10 max-w-2xl">
-          <div className="inline-flex items-center px-3 py-1 rounded-full bg-brand-500/20 text-brand-400 text-xs font-bold mb-4 border border-brand-500/30">
-            <Zap className="w-3 h-3 mr-1" />
-            AI HEALTH INSIGHT
+          {/* Steps Bar Chart */}
+          <div className="bg-white p-8 rounded-[2.5rem] border border-navy-100 shadow-sm">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h3 className="text-xl font-bold text-navy-900">Activity Overview</h3>
+                <p className="text-navy-500 text-sm">Daily steps aggregated ({timeRange})</p>
+              </div>
+            </div>
+            
+            <div className="h-72 w-full">
+              {stepsChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stepsChartData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dx={-10} />
+                    <Tooltip 
+                      cursor={{fill: '#f8fafc'}}
+                      contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
+                    />
+                    <Bar dataKey="steps" radius={[10, 10, 0, 0]}>
+                      {stepsChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={index === stepsChartData.length - 1 ? '#14b8a6' : '#ccfbf1'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-navy-400 text-sm">
+                  No activity logs found for this range.
+                </div>
+              )}
+            </div>
           </div>
-          <h2 className="text-2xl font-bold mb-3">Your Sleep Quality has improved by 15% this week</h2>
-          <p className="text-navy-300 text-lg mb-6">
-            We noticed that following your 8:00 PM wind-down routine has led to deeper REM sleep cycles. 
-            Keep it up to maintain high cognitive performance!
-          </p>
-          <div className="flex flex-wrap gap-4">
-            <button className="bg-brand-500 hover:bg-brand-600 text-white font-bold px-6 py-3 rounded-2xl transition-all shadow-lg shadow-brand-500/20">
-              View Detailed Analysis
-            </button>
-            <button className="bg-white/10 hover:bg-white/20 text-white font-bold px-6 py-3 rounded-2xl transition-all border border-white/10">
-              Dismiss
-            </button>
+        </div>
+      )}
+
+      {/* Goal Modal */}
+      {showGoalModal && (
+        <div className="fixed inset-0 bg-navy-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[2.5rem] max-w-md w-full p-8 shadow-2xl border border-navy-100 animate-slide-in">
+            <h3 className="text-2xl font-bold text-navy-900 mb-6">Edit Daily Health Goals</h3>
+            <form onSubmit={handleSaveGoals} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-navy-600 mb-1">Steps Target</label>
+                <input 
+                  type="number"
+                  value={stepsGoal}
+                  onChange={(e) => setStepsGoal(parseInt(e.target.value))}
+                  className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-navy-600 mb-1">Calories Burned Target (kcal)</label>
+                <input 
+                  type="number"
+                  value={caloriesGoal}
+                  onChange={(e) => setCaloriesGoal(parseInt(e.target.value))}
+                  className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-navy-600 mb-1">Hydration Target (L)</label>
+                <input 
+                  type="number"
+                  step="0.1"
+                  value={hydrationGoal}
+                  onChange={(e) => setHydrationGoal(parseFloat(e.target.value))}
+                  className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-navy-600 mb-1">Sleep Target (hrs)</label>
+                <input 
+                  type="number"
+                  step="0.5"
+                  value={sleepGoal}
+                  onChange={(e) => setSleepGoal(parseFloat(e.target.value))}
+                  className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-navy-600 mb-1">Distance Target (km)</label>
+                <input 
+                  type="number"
+                  step="0.1"
+                  value={distanceGoal}
+                  onChange={(e) => setDistanceGoal(parseFloat(e.target.value))}
+                  className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                />
+              </div>
+
+              <div className="flex space-x-3 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => setShowGoalModal(false)}
+                  className="w-1/2 py-3 bg-navy-50 text-navy-600 font-bold rounded-2xl hover:bg-navy-100 transition"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="w-1/2 py-3 bg-brand-500 text-white font-bold rounded-2xl hover:bg-brand-600 transition"
+                >
+                  Save Goals
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/sync_service.dart';
+import '../services/health_service.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -14,17 +15,31 @@ class _HealthScreenState extends State<HealthScreen> {
   List<dynamic> _records = [];
   bool _isLoading = true;
 
+  // Real-time Vitals from Health Connect
   String _heartRate = '--';
-  String _bloodPressure = '--/--';
   String _steps = '--';
+  String _calories = '--';
+  String _distance = '--';
   String _sleep = '--';
+  String _spo2 = '--';
+  String _hydration = '--';
+  String _weight = '--';
+  String _bloodPressure = '--/--';
+
+  // Goals
+  int _stepsGoal = 10000;
+  double _caloriesGoal = 2000.0;
+  double _hydrationGoal = 2.0;
+  double _sleepGoal = 8.0;
+  double _distanceGoal = 5.0;
 
   StreamSubscription? _syncSubscription;
+  Timer? _healthSyncTimer;
 
   @override
   void initState() {
     super.initState();
-    _fetchData();
+    _initHealthSync();
     _syncSubscription = SyncService.instance.stream.listen((event) {
       if (event['type'] == 'health.update') {
         _fetchData();
@@ -35,36 +50,62 @@ class _HealthScreenState extends State<HealthScreen> {
   @override
   void dispose() {
     _syncSubscription?.cancel();
+    _healthSyncTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _initHealthSync() async {
+    // 1. Fetch current health records and goals
+    await _fetchData();
+    // 2. Perform initial Health Connect sync
+    await _syncHealthConnect();
+    // 3. Periodic sync every 60 seconds
+    _healthSyncTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      _syncHealthConnect();
+    });
+  }
+
+  Future<void> _syncHealthConnect() async {
+    try {
+      final snapshot = await HealthService.instance.fetchTodaySnapshot();
+      // Post today's data to Django backend
+      final success = await ApiService.syncHealthSnapshot(snapshot);
+      if (success) {
+        debugPrint('Health Connect synced successfully.');
+        _fetchData();
+      }
+    } catch (e) {
+      debugPrint('Health Connect sync failed: $e');
+    }
   }
 
   Future<void> _fetchData() async {
     final records = await ApiService.getHealthData();
+    final summary = await ApiService.getHealthSummary(range: 'daily');
+
     if (mounted) {
       setState(() {
         _records = records;
         _isLoading = false;
-        
-        if (records.isNotEmpty) {
-          final latest = records.first;
-          _heartRate = (latest['heart_rate'] ?? '--').toString();
-          _bloodPressure = (latest['blood_pressure'] ?? '--/--').toString();
-          
-          final stepsNum = latest['steps'];
-          if (stepsNum != null) {
-            _steps = stepsNum >= 1000 
-                ? '${(stepsNum / 1000.0).toStringAsFixed(1)}k' 
-                : stepsNum.toString();
-          } else {
-            _steps = '--';
+
+        if (summary != null) {
+          _heartRate = (summary['latest_heart_rate'] ?? '--').toString();
+          _steps = (summary['today_steps'] ?? '0').toString();
+          _calories = (summary['today_calories'] ?? '0').toString();
+          _distance = (summary['today_distance'] ?? '0.0').toString();
+          _sleep = (summary['today_sleep'] ?? '--').toString();
+          _spo2 = (summary['latest_spo2'] ?? '--').toString();
+          _hydration = (summary['today_hydration'] ?? '--').toString();
+          _weight = (summary['latest_weight'] ?? '--').toString();
+
+          final goal = summary['goal'];
+          if (goal != null) {
+            _stepsGoal = goal['steps_goal'] ?? 10000;
+            _caloriesGoal = (goal['calories_goal'] ?? 2000.0).toDouble();
+            _hydrationGoal = (goal['hydration_goal'] ?? 2.0).toDouble();
+            _sleepGoal = (goal['sleep_goal'] ?? 8.0).toDouble();
+            _distanceGoal = (goal['distance_goal'] ?? 5.0).toDouble();
           }
-          
-          _sleep = (latest['sleep_hours'] ?? '--').toString();
-        } else {
-          _heartRate = '--';
-          _bloodPressure = '--/--';
-          _steps = '--';
-          _sleep = '--';
         }
       });
     }
@@ -122,7 +163,6 @@ class _HealthScreenState extends State<HealthScreen> {
                   ),
                   const SizedBox(height: 16),
                   
-                  // Two-column fields
                   Row(
                     children: [
                       Expanded(
@@ -256,13 +296,14 @@ class _HealthScreenState extends State<HealthScreen> {
                               final height = double.tryParse(heightController.text) ?? 170.0;
                               final notes = notesController.text.trim();
 
-                              final success = await ApiService.createHealthRecord({
+                              final success = await ApiService.syncHealthSnapshot({
+                                'source': 'MANUAL',
                                 'heart_rate': hr,
-                                'oxygen_level': oxy,
+                                'spo2': oxy,
                                 'blood_pressure': bp,
                                 'steps': steps,
                                 'sleep_hours': sleep,
-                                'water_intake': water,
+                                'hydration': water,
                                 'weight': weight,
                                 'height': height,
                                 'notes': notes,
@@ -306,9 +347,9 @@ class _HealthScreenState extends State<HealthScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: dark ? 0.05 : 0.6),
+        color: Colors.white.withOpacity(dark ? 0.05 : 0.6),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
       ),
       child: TextField(
         controller: controller,
@@ -328,17 +369,24 @@ class _HealthScreenState extends State<HealthScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final alertColor = const Color(0xFFEF4444);
+
+    // Check emergency thresholds
+    double? currentHr = double.tryParse(_heartRate);
+    double? currentOxygen = double.tryParse(_spo2);
+    bool hasEmergency = (currentHr != null && (currentHr > 120 || currentHr < 45)) || 
+                        (currentOxygen != null && currentOxygen < 90);
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Health Hub'),
+        title: const Text('Google Fit Sync'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF14B8A6)),
+            icon: const Icon(Icons.sync_rounded, color: Color(0xFF14B8A6)),
             onPressed: () {
               setState(() => _isLoading = true);
-              _fetchData();
+              _syncHealthConnect();
             },
           ),
         ],
@@ -348,6 +396,35 @@ class _HealthScreenState extends State<HealthScreen> {
         : ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Emergency Vital Alert
+          if (hasEmergency)
+            Container(
+              margin: const EdgeInsets.bottom(16),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: alertColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: alertColor.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: alertColor, size: 28),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Abnormal Vitals Detected!', 
+                          style: TextStyle(fontWeight: FontWeight.bold, color: alertColor)),
+                        const Text('Please rest and check your notifications or contact your doctor.',
+                          style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
           // Vitals Grid
           GridView.count(
             crossAxisCount: 2,
@@ -355,20 +432,95 @@ class _HealthScreenState extends State<HealthScreen> {
             physics: const NeverScrollableScrollPhysics(),
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 1.3,
+            childAspectRatio: 1.1,
             children: [
-              _VitalCard(label: 'Heart Rate', value: _heartRate, unit: 'bpm',
-                icon: Icons.favorite_rounded, color: const Color(0xFFEF4444)),
-              _VitalCard(label: 'Blood Pressure', value: _bloodPressure, unit: 'mmHg',
-                icon: Icons.water_drop_rounded, color: const Color(0xFF6366F1)),
-              _VitalCard(label: 'Steps Today', value: _steps, unit: 'steps',
-                icon: Icons.directions_walk_rounded, color: const Color(0xFF14B8A6)),
-              _VitalCard(label: 'Sleep', value: _sleep, unit: 'hrs',
-                icon: Icons.bedtime_rounded, color: const Color(0xFFF59E0B)),
+              _VitalCard(
+                label: 'Heart Rate', 
+                value: _heartRate, 
+                unit: 'bpm',
+                progress: _heartRate != '--' ? (double.tryParse(_heartRate) ?? 0.0) / 100.0 : 0.0,
+                icon: Icons.favorite_rounded, 
+                color: const Color(0xFFEF4444)
+              ),
+              _VitalCard(
+                label: 'Steps Today', 
+                value: _steps, 
+                unit: 'steps',
+                progress: _steps != '--' ? (double.tryParse(_steps) ?? 0.0) / _stepsGoal : 0.0,
+                icon: Icons.directions_walk_rounded, 
+                color: const Color(0xFF14B8A6)
+              ),
+              _VitalCard(
+                label: 'Oxygen (SpO₂)', 
+                value: _spo2, 
+                unit: '%',
+                progress: _spo2 != '--' ? (double.tryParse(_spo2) ?? 0.0) / 100.0 : 0.0,
+                icon: Icons.thermostat_rounded, 
+                color: const Color(0xFF3B82F6)
+              ),
+              _VitalCard(
+                label: 'Sleep Duration', 
+                value: _sleep, 
+                unit: 'hrs',
+                progress: _sleep != '--' ? (double.tryParse(_sleep) ?? 0.0) / _sleepGoal : 0.0,
+                icon: Icons.bedtime_rounded, 
+                color: const Color(0xFF6366F1)
+              ),
             ],
           ),
           const SizedBox(height: 24),
-          const Text('Recent Records',
+
+          // Secondary Vitals Cards
+          Row(
+            children: [
+              Expanded(
+                child: _buildSecondaryCard(
+                  title: 'Hydration',
+                  value: '$_hydration L',
+                  sub: 'Goal: $_hydrationGoal L',
+                  icon: Icons.local_drink_rounded,
+                  color: Colors.cyan,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildSecondaryCard(
+                  title: 'Calories',
+                  value: '$_calories kcal',
+                  sub: 'Goal: ${_caloriesGoal.toInt()} kcal',
+                  icon: Icons.local_fire_department_rounded,
+                  color: Colors.orange,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSecondaryCard(
+                  title: 'Weight Trends',
+                  value: '$_weight kg',
+                  sub: 'Target stable',
+                  icon: Icons.monitor_weight_rounded,
+                  color: Colors.purple,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildSecondaryCard(
+                  title: 'Distance',
+                  value: '$_distance km',
+                  sub: 'Goal: $_distanceGoal km',
+                  icon: Icons.trending_up_rounded,
+                  color: Colors.pink,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          const Text('Vitals History Logs',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
               color: Color(0xFF14B8A6))),
           const SizedBox(height: 12),
@@ -381,7 +533,7 @@ class _HealthScreenState extends State<HealthScreen> {
                  padding: EdgeInsets.all(24.0),
                  child: Center(
                    child: Text(
-                     'No health records found in database. Tap the "+" button to log your first entry!',
+                     'No health records found in database. Vitals synced from Health Connect or logged manually will appear here.',
                      textAlign: TextAlign.center,
                      style: TextStyle(color: Color(0xFF64748B)),
                    ),
@@ -395,7 +547,7 @@ class _HealthScreenState extends State<HealthScreen> {
               decoration: BoxDecoration(
                 color: Theme.of(context).cardColor,
                 borderRadius: BorderRadius.circular(16),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
                   blurRadius: 8)],
               ),
               child: Row(
@@ -403,7 +555,7 @@ class _HealthScreenState extends State<HealthScreen> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF14B8A6).withValues(alpha: 0.1),
+                      color: const Color(0xFF14B8A6).withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Icon(Icons.medical_services_rounded,
@@ -439,16 +591,65 @@ class _HealthScreenState extends State<HealthScreen> {
       ),
     );
   }
+
+  Widget _buildSecondaryCard({
+    required String title,
+    required String value,
+    required String sub,
+    required IconData icon,
+    required Color color,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: isDark ? Colors.white : const Color(0xFF0F172A))),
+                Text(sub, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _VitalCard extends StatelessWidget {
   final String label;
   final String value;
   final String unit;
+  final double progress;
   final IconData icon;
   final Color color;
-  const _VitalCard({required this.label, required this.value,
-    required this.unit, required this.icon, required this.color});
+
+  const _VitalCard({
+    required this.label, 
+    required this.value,
+    required this.unit, 
+    required this.progress, 
+    required this.icon, 
+    required this.color
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -458,12 +659,27 @@ class _VitalCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.between,
+            children: [
+              Icon(icon, color: color, size: 24),
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 3,
+                  backgroundColor: Colors.grey.withOpacity(0.2),
+                  color: color,
+                ),
+              ),
+            ],
+          ),
           const Spacer(),
           Text(value, style: TextStyle(fontSize: 20,
             fontWeight: FontWeight.bold, color: isDark ? Colors.white : const Color(0xFF0F172A))),

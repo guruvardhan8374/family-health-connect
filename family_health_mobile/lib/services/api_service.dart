@@ -464,6 +464,53 @@ class ApiService {
     }
   }
 
+  static Future<bool> syncHealthSnapshot(Map<String, dynamic> data) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/health/snapshots/'),
+        headers: headers,
+        body: jsonEncode(data),
+      );
+      return response.statusCode == 201;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getHealthSummary({String range = 'daily'}) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/health/summary/?range=$range'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getHealthGoals() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/health/goals/'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+
   // ─── Phone OTP Authentication ───────────────────────────────────────────────
 
   /// Sends a one-time password to [phoneNumber].

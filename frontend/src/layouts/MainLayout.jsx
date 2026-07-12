@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
-import AIChatbot from '../components/AIChatbot';
 import { requestForToken, onMessageListener } from '../utils/notifications';
 import api from '../utils/api';
 import { applyTheme } from '../utils/theme';
@@ -33,7 +32,6 @@ export default function MainLayout() {
         <Topbar />
         <main className="flex-1 overflow-y-auto p-6 relative">
           <Outlet />
-          <AIChatbot />
         </main>
       </div>
     </div>

@@ -2,8 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { 
   Send, Video, Loader2, MoreVertical, Paperclip, 
   Search, Phone, Smile, Mic, Pin, Archive, Trash2,
-  Check, CheckCheck, X, Sparkles, Brain, HeartPulse,
-  Eye, Zap, Plus, Users, User
+  Check, CheckCheck, X, Plus, Users, User
 } from 'lucide-react';
 import api from '../utils/api';
 import MessageBubble from '../components/chat/MessageBubble';
@@ -29,10 +28,9 @@ export default function Chat() {
   const [onlineStatus, setOnlineStatus] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Stories & AI States
+  // Stories State
   const [stories, setStories] = useState([]);
   const [activeStory, setActiveStory] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
 
   // New Chat States
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -206,53 +204,6 @@ export default function Chat() {
     } catch (err) {
       console.error("Failed to start group chat:", err);
       alert("Failed to start group chat session.");
-    }
-  };
-
-  const handleAskAI = async (type = 'HEALTH') => {
-    setAiLoading(true);
-    try {
-      const prompt = type === 'HEALTH'
-        ? "Analyze the latest family health reports and provide a wellness summary."
-        : "Summarize the recent family chat and highlight key updates.";
-      const res = await api.post('/chat/ai-assistant/', { prompt, context_type: type });
-
-      const aiMsg = {
-        id: Date.now(),
-        content: res.data.analysis || 'No response from AI.',
-        sender_details: {
-          id: 999,
-          username: 'Family AI',
-          profile_picture: 'https://i.pravatar.cc/150?u=ai'
-        },
-        message_type: 'TEXT',
-        timestamp: new Date().toISOString(),
-        is_ai: true,
-      };
-
-      // Add offline note if fallback mode
-      if (res.data.fallback) {
-        aiMsg.content += '\n\n⚡ (Offline mode — configure GEMINI_API_KEY for live AI responses)';
-      }
-
-      setMessages(prev => [...prev, aiMsg]);
-    } catch (err) {
-      const isAuth = err.response?.status === 401;
-      const errMsg = {
-        id: Date.now(),
-        content: isAuth
-          ? 'Your session expired. Please log in again.'
-          : 'AI service is temporarily unavailable. Please try again shortly.',
-        sender_details: { id: 999, username: 'Family AI', profile_picture: 'https://i.pravatar.cc/150?u=ai' },
-        message_type: 'TEXT',
-        timestamp: new Date().toISOString(),
-        is_ai: true,
-        is_error: true,
-      };
-      setMessages(prev => [...prev, errMsg]);
-      console.error('AI assistant error:', err);
-    } finally {
-      setAiLoading(false);
     }
   };
 
@@ -517,7 +468,6 @@ export default function Chat() {
                 </div>
               </div>
               <div className="flex items-center space-x-1 md:space-x-2">
-                <button onClick={() => handleAskAI('HEALTH')} className="p-2 md:p-3 bg-brand-500/10 hover:bg-brand-500/20 text-brand-500 rounded-xl md:rounded-2xl transition-all shadow-sm border border-brand-500/20" title="AI Health Analysis"><Brain className={`w-4 h-4 md:w-5 md:h-5 ${aiLoading ? 'animate-pulse' : ''}`} /></button>
                 <button onClick={() => initiateCall('VOICE')} className="p-2 md:p-3 bg-white hover:bg-navy-50 text-navy-600 rounded-xl md:rounded-2xl transition-all shadow-sm border border-navy-100"><Phone className="w-4 h-4 md:w-5 md:h-5" /></button>
                 <button onClick={() => initiateCall('VIDEO')} className="p-2 md:p-3 bg-white hover:bg-navy-50 text-brand-600 rounded-xl md:rounded-2xl transition-all shadow-sm border border-navy-100"><Video className="w-4 h-4 md:w-5 md:h-5" /></button>
               </div>
@@ -534,7 +484,6 @@ export default function Chat() {
                 <div className="flex-1 flex items-center bg-white border border-navy-100 rounded-[2rem] px-4 py-2 shadow-sm">
                   <button type="button" onClick={() => setShowAttachments(!showAttachments)} className={`p-2 rounded-full transition-all ${showAttachments ? 'bg-brand-500 text-white' : 'hover:bg-navy-50 text-navy-400'}`}><Paperclip className="w-5 h-5" /></button>
                   <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Message family..." className="flex-1 bg-transparent border-none focus:ring-0 text-navy-900 px-4 py-2 font-medium outline-none" />
-                  <button type="button" onClick={() => handleAskAI('CHAT')} className="p-2 text-brand-500 hover:scale-110 transition-transform" title="Summarize Chat with AI"><Zap className="w-5 h-5" /></button>
                 </div>
                 <button type="submit" disabled={!input.trim()} className={`p-4 rounded-[1.5rem] transition-all shadow-xl ${input.trim() ? 'bg-brand-500 text-white shadow-brand-500/40' : 'bg-navy-100 text-navy-300'}`}><Send className="w-6 h-6" /></button>
               </form>

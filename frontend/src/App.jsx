@@ -11,7 +11,6 @@ import Register from './pages/Register';
 import OTPVerification from './pages/OTPVerification';
 import Settings from './pages/Settings';
 import ForgotPassword from './pages/ForgotPassword';
-import AISummary from './pages/AISummary';
 import HealthComparison from './pages/HealthComparison';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SyncProvider } from './contexts/SyncContext';
@@ -74,7 +73,6 @@ function App() {
               <Route path="chat"        element={<Chat />} />
               <Route path="emergency"   element={<Emergency />} />
               <Route path="settings"    element={<Settings />} />
-              <Route path="ai-intelligence"  element={<AISummary />} />
               <Route path="health-comparison" element={<HealthComparison />} />
             </Route>
 

@@ -10,5 +10,4 @@ router.register(r'stories', views.StoryViewSet, basename='story')
 urlpatterns = [
     path('', include(router.urls)),
     path('upload/', views.MediaUploadView.as_view(), name='media-upload'),
-    path('ai-assistant/', views.AIAssistantView.as_view(), name='ai-assistant'),
 ]

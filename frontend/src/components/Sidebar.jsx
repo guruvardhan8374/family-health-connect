@@ -1,15 +1,14 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, HeartPulse, Users, MessageCircle, ShieldAlert, Settings, Brain, Activity } from 'lucide-react';
+import { Home, HeartPulse, Users, MessageCircle, ShieldAlert, Settings, Activity } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 const navItems = [
-  { name: 'Dashboard', path: '/', icon: Home },
-  { name: 'Health Hub', path: '/health', icon: HeartPulse },
-  { name: 'Intelligence', path: '/ai-intelligence', icon: Brain },
+  { name: 'Dashboard',  path: '/',                 icon: Home },
+  { name: 'Health Hub', path: '/health',            icon: HeartPulse },
   { name: 'Comparison', path: '/health-comparison', icon: Activity },
-  { name: 'Family', path: '/family', icon: Users },
-  { name: 'Chat', path: '/chat', icon: MessageCircle },
-  { name: 'Settings', path: '/settings', icon: Settings },
+  { name: 'Family',     path: '/family',            icon: Users },
+  { name: 'Chat',       path: '/chat',              icon: MessageCircle },
+  { name: 'Settings',   path: '/settings',          icon: Settings },
 ];
 
 export default function Sidebar() {

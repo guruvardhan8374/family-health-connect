@@ -82,10 +82,14 @@ class HealthMetric(models.Model):
         ('OXYGEN', 'Oxygen Level (%)'),
         ('STRESS', 'Stress Level'),
         ('BLOOD_PRESSURE', 'Blood Pressure'),
+        ('DISTANCE', 'Distance (km)'),
+        ('BLOOD_PRESSURE_SYSTOLIC', 'Systolic Blood Pressure'),
+        ('BLOOD_PRESSURE_DIASTOLIC', 'Diastolic Blood Pressure'),
+        ('WEIGHT', 'Weight (kg)'),
     )
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='health_metrics')
-    metric_type = models.CharField(max_length=20, choices=METRIC_TYPES)
+    metric_type = models.CharField(max_length=30, choices=METRIC_TYPES)
     value = models.FloatField()
     unit = models.CharField(max_length=20, blank=True, null=True)
     recorded_at = models.DateTimeField(auto_now_add=True)

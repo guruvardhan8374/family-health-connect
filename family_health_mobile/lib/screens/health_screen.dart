@@ -35,6 +35,7 @@ class _HealthScreenState extends State<HealthScreen> {
   double _distanceGoal = 5.0;
 
   StreamSubscription? _syncSubscription;
+  Timer? _pollingTimer;
 
   @override
   void initState() {
@@ -45,11 +46,16 @@ class _HealthScreenState extends State<HealthScreen> {
         _fetchData();
       }
     });
+    // Poll today's summary every 20 seconds
+    _pollingTimer = Timer.periodic(const Duration(seconds: 20), (timer) {
+      _fetchTodaySummary();
+    });
   }
 
   @override
   void dispose() {
     _syncSubscription?.cancel();
+    _pollingTimer?.cancel();
     HealthService.instance.stopLiveMonitoring();
     HealthSyncService.instance.disconnect();
     super.dispose();
@@ -97,20 +103,37 @@ class _HealthScreenState extends State<HealthScreen> {
     });
   }
 
+  Future<void> _fetchTodaySummary() async {
+    final todaySummary = await ApiService.getTodayHealthSummary();
+    if (todaySummary != null && mounted) {
+      setState(() {
+        _steps = (todaySummary['steps'] ?? '0').toString();
+        _distance = (todaySummary['distance'] ?? '0.0').toString();
+        _heartRate = (todaySummary['heart_rate'] ?? '--').toString();
+        _bloodPressure = (todaySummary['blood_pressure'] ?? '--/--').toString();
+      });
+    }
+  }
+
   Future<void> _fetchData() async {
     final records = await ApiService.getHealthData();
     final summary = await ApiService.getHealthSummary(range: 'daily');
+    final todaySummary = await ApiService.getTodayHealthSummary();
 
     if (mounted) {
       setState(() {
         _records = records;
         _isLoading = false;
 
+        if (todaySummary != null) {
+          _steps = (todaySummary['steps'] ?? '0').toString();
+          _distance = (todaySummary['distance'] ?? '0.0').toString();
+          _heartRate = (todaySummary['heart_rate'] ?? '--').toString();
+          _bloodPressure = (todaySummary['blood_pressure'] ?? '--/--').toString();
+        }
+
         if (summary != null) {
-          _heartRate = (summary['latest_heart_rate'] ?? '--').toString();
-          _steps = (summary['today_steps'] ?? '0').toString();
           _calories = (summary['today_calories'] ?? '0').toString();
-          _distance = (summary['today_distance'] ?? '0.0').toString();
           _sleep = (summary['today_sleep'] ?? '--').toString();
           _spo2 = (summary['latest_spo2'] ?? '--').toString();
           _hydration = (summary['today_hydration'] ?? '--').toString();
@@ -326,6 +349,27 @@ class _HealthScreenState extends State<HealthScreen> {
                                 'height': height,
                                 'notes': notes,
                               });
+
+                              if (success) {
+                                // Log to the new metrics endpoint in parallel
+                                double? systolic;
+                                double? diastolic;
+                                if (bp.contains('/')) {
+                                  final parts = bp.split('/');
+                                  if (parts.length == 2) {
+                                    systolic = double.tryParse(parts[0].trim());
+                                    diastolic = double.tryParse(parts[1].trim());
+                                  }
+                                }
+                                
+                                final List<Future<bool>> metricsLog = [
+                                  ApiService.logHealthMetric('HEART_RATE', hr.toDouble()),
+                                  if (systolic != null) ApiService.logHealthMetric('BLOOD_PRESSURE_SYSTOLIC', systolic),
+                                  if (diastolic != null) ApiService.logHealthMetric('BLOOD_PRESSURE_DIASTOLIC', diastolic),
+                                  ApiService.logHealthMetric('WEIGHT', weight.toDouble()),
+                                ];
+                                await Future.wait(metricsLog);
+                              }
 
                               if (ctx.mounted) {
                                 Navigator.pop(ctx);

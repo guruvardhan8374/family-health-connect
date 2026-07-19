@@ -23,6 +23,15 @@ export default function HealthHub() {
   const [alerts, setAlerts] = useState([]);
   const [showGoalModal, setShowGoalModal] = useState(false);
 
+  // New Fitness Summary & Log Modal States
+  const [todaySummary, setTodaySummary] = useState({ steps: 0, distance: 0.0, heart_rate: null, blood_pressure: null });
+  const [showLogModal, setShowLogModal] = useState(false);
+  const [hrInput, setHrInput] = useState('');
+  const [bpSysInput, setBpSysInput] = useState('');
+  const [bpDiaInput, setBpDiaInput] = useState('');
+  const [weightInput, setWeightInput] = useState('');
+  const [logSaving, setLogSaving] = useState(false);
+
   // Goal Form Fields
   const [stepsGoal, setStepsGoal] = useState(10000);
   const [caloriesGoal, setCaloriesGoal] = useState(2000);
@@ -42,6 +51,15 @@ export default function HealthHub() {
       console.error('Failed to fetch family health summary:', err);
     }
   }, [selectedMemberId]);
+
+  const fetchTodaySummary = useCallback(async () => {
+    try {
+      const res = await api.get('/health/summary/today/');
+      setTodaySummary(res.data || { steps: 0, distance: 0.0, heart_rate: null, blood_pressure: null });
+    } catch (err) {
+      console.error('Failed to fetch today\'s health summary:', err);
+    }
+  }, []);
 
   const fetchHealthSummary = useCallback(async () => {
     try {
@@ -69,6 +87,12 @@ export default function HealthHub() {
   useEffect(() => {
     fetchHealthSummary();
   }, [fetchHealthSummary]);
+
+  useEffect(() => {
+    fetchTodaySummary();
+    const interval = setInterval(fetchTodaySummary, 20000);
+    return () => clearInterval(interval);
+  }, [fetchTodaySummary]);
 
   // Real-time synchronization
   const currentUserId = parseInt(localStorage.getItem('user_id') || '0');
@@ -141,6 +165,39 @@ export default function HealthHub() {
     }
   };
 
+  const handleLogVitals = async (e) => {
+    e.preventDefault();
+    setLogSaving(true);
+    try {
+      const promises = [];
+      if (hrInput) {
+        promises.push(api.post('/health/metrics/', { metric_type: 'HEART_RATE', value: parseFloat(hrInput) }));
+      }
+      if (bpSysInput) {
+        promises.push(api.post('/health/metrics/', { metric_type: 'BLOOD_PRESSURE_SYSTOLIC', value: parseFloat(bpSysInput) }));
+      }
+      if (bpDiaInput) {
+        promises.push(api.post('/health/metrics/', { metric_type: 'BLOOD_PRESSURE_DIASTOLIC', value: parseFloat(bpDiaInput) }));
+      }
+      if (weightInput) {
+        promises.push(api.post('/health/metrics/', { metric_type: 'WEIGHT', value: parseFloat(weightInput) }));
+      }
+      if (promises.length > 0) {
+        await Promise.all(promises);
+        setHrInput('');
+        setBpSysInput('');
+        setBpDiaInput('');
+        setWeightInput('');
+        fetchTodaySummary();
+      }
+      setShowLogModal(false);
+    } catch (err) {
+      console.error('Failed to log vitals metrics:', err);
+    } finally {
+      setLogSaving(false);
+    }
+  };
+
   const selectedMemberData = familyData.find(m => m.user_id === selectedMemberId);
 
   // Compute selected member vitals
@@ -148,17 +205,17 @@ export default function HealthHub() {
   const currentUserId = parseInt(localStorage.getItem('user_id') || '0');
   const isSelf = selectedMemberId === currentUserId;
 
-  // Use summaryData for trending charts of self, otherwise use basic metrics
+  // Use summaryData/todaySummary for self, otherwise use family snapshot metrics
   const activeVitals = {
-    heartRate: isSelf ? (summaryData?.latest_heart_rate ?? displayVitals.heart_rate ?? '--') : (displayVitals.heart_rate ?? '--'),
-    steps: isSelf ? (summaryData?.today_steps ?? displayVitals.steps ?? 0) : (displayVitals.steps ?? 0),
+    heartRate: isSelf ? (todaySummary.heart_rate ?? summaryData?.latest_heart_rate ?? displayVitals.heart_rate ?? '--') : (displayVitals.heart_rate ?? '--'),
+    steps: isSelf ? (todaySummary.steps ?? summaryData?.today_steps ?? displayVitals.steps ?? 0) : (displayVitals.steps ?? 0),
     oxygen: isSelf ? (summaryData?.latest_spo2 ?? displayVitals.spo2 ?? '--') : (displayVitals.spo2 ?? '--'),
-    sleep: isSelf ? (summaryData?.today_sleep ?? displayVitals.sleep_hours ?? '--') : (displayVitals.sleep_hours ?? '--'),
+    sleep: isSelf ? (summaryData?.today_sleep ?? displayVitals.sleep_session ?? displayVitals.sleep_hours ?? '--') : (displayVitals.sleep_hours ?? '--'),
     calories: isSelf ? (summaryData?.today_calories ?? displayVitals.calories ?? 0) : (displayVitals.calories ?? 0),
     hydration: isSelf ? (summaryData?.today_hydration ?? displayVitals.hydration ?? '--') : (displayVitals.hydration ?? '--'),
     bmi: isSelf ? (summaryData?.latest_bmi ?? displayVitals.bmi ?? '--') : (displayVitals.bmi ?? '--'),
-    distance: isSelf ? (summaryData?.today_distance ?? displayVitals.distance ?? '--') : (displayVitals.distance ?? '--'),
-    bloodPressure: displayVitals.blood_pressure || '--',
+    distance: isSelf ? (todaySummary.distance ?? summaryData?.today_distance ?? displayVitals.distance ?? '--') : (displayVitals.distance ?? '--'),
+    bloodPressure: isSelf ? (todaySummary.blood_pressure ?? displayVitals.blood_pressure ?? '--') : (displayVitals.blood_pressure ?? '--'),
   };
 
   // Convert chart details
@@ -240,6 +297,14 @@ export default function HealthHub() {
           >
             <PlusCircle className="w-4 h-4" />
             <span>Set Goals</span>
+          </button>
+
+          <button 
+            onClick={() => setShowLogModal(true)}
+            className="flex items-center space-x-1 px-4 py-2 bg-brand-500 text-white rounded-2xl shadow-sm hover:bg-brand-600 transition-all font-bold text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Log Vitals</span>
           </button>
         </div>
       </header>
@@ -553,6 +618,79 @@ export default function HealthHub() {
                   className="w-1/2 py-3 bg-brand-500 text-white font-bold rounded-2xl hover:bg-brand-600 transition"
                 >
                   Save Goals
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Log Vitals Modal */}
+      {showLogModal && (
+        <div className="fixed inset-0 bg-navy-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[2.5rem] max-w-md w-full p-8 shadow-2xl border border-navy-100 animate-slide-in">
+            <h3 className="text-2xl font-bold text-navy-900 mb-6">Log New Vitals Reading</h3>
+            <form onSubmit={handleLogVitals} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-navy-600 mb-1">Heart Rate (bpm)</label>
+                <input 
+                  type="number"
+                  placeholder="e.g. 72"
+                  value={hrInput}
+                  onChange={(e) => setHrInput(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-navy-600 mb-1">BP Systolic (mmHg)</label>
+                  <input 
+                    type="number"
+                    placeholder="e.g. 120"
+                    value={bpSysInput}
+                    onChange={(e) => setBpSysInput(e.target.value)}
+                    className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-navy-600 mb-1">BP Diastolic (mmHg)</label>
+                  <input 
+                    type="number"
+                    placeholder="e.g. 80"
+                    value={bpDiaInput}
+                    onChange={(e) => setBpDiaInput(e.target.value)}
+                    className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-navy-600 mb-1">Weight (kg) — Optional</label>
+                <input 
+                  type="number"
+                  step="0.1"
+                  placeholder="e.g. 70.0"
+                  value={weightInput}
+                  onChange={(e) => setWeightInput(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-navy-100 focus:outline-none focus:border-brand-500 text-navy-900 font-bold"
+                />
+              </div>
+
+              <div className="flex space-x-3 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => setShowLogModal(false)}
+                  className="w-1/2 py-3 bg-navy-50 text-navy-600 font-bold rounded-2xl hover:bg-navy-100 transition"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={logSaving}
+                  className="w-1/2 py-3 bg-brand-500 text-white font-bold rounded-2xl hover:bg-brand-600 transition flex items-center justify-center"
+                >
+                  {logSaving ? 'Saving...' : 'Log Vitals'}
                 </button>
               </div>
             </form>

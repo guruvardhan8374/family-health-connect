@@ -12,6 +12,7 @@ import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/sync_service.dart';
 import 'services/offline_queue_service.dart';
+import 'services/pedometer_service.dart';
 
 class ThemeController {
   static final ThemeController instance = ThemeController._internal();
@@ -244,6 +245,12 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    PedometerService.instance.init();
+  }
 
   final List<Widget> _screens = const [
     DashboardScreen(),

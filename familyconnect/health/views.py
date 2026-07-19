@@ -432,3 +432,62 @@ class FamilyHealthSummaryView(APIView):
                 })
 
         return Response(result)
+
+
+class HealthSummaryTodayView(APIView):
+    """
+    GET /health/summary/today/
+    Returns aggregated fitness data for today:
+    - steps: sum of steps today
+    - distance: sum of distance today
+    - heart_rate: latest heart rate reading
+    - blood_pressure: latest blood pressure reading ("systolic/diastolic")
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        today = timezone.localdate()
+
+        # Sum steps logged today
+        steps_today = HealthMetric.objects.filter(
+            user=user,
+            metric_type='STEPS',
+            recorded_at__date=today
+        ).aggregate(total=Sum('value'))['total'] or 0.0
+
+        # Sum distance logged today
+        distance_today = HealthMetric.objects.filter(
+            user=user,
+            metric_type='DISTANCE',
+            recorded_at__date=today
+        ).aggregate(total=Sum('value'))['total'] or 0.0
+
+        # Latest heart rate reading (fallback to overall latest for better UX)
+        latest_hr_obj = HealthMetric.objects.filter(
+            user=user,
+            metric_type='HEART_RATE'
+        ).order_by('-recorded_at').first()
+        latest_hr = latest_hr_obj.value if latest_hr_obj else None
+
+        # Latest blood pressure readings (overall)
+        latest_sys_obj = HealthMetric.objects.filter(
+            user=user,
+            metric_type='BLOOD_PRESSURE_SYSTOLIC'
+        ).order_by('-recorded_at').first()
+
+        latest_dia_obj = HealthMetric.objects.filter(
+            user=user,
+            metric_type='BLOOD_PRESSURE_DIASTOLIC'
+        ).order_by('-recorded_at').first()
+
+        blood_pressure = None
+        if latest_sys_obj and latest_dia_obj:
+            blood_pressure = f"{int(latest_sys_obj.value)}/{int(latest_dia_obj.value)}"
+
+        return Response({
+            'steps': int(steps_today),
+            'distance': round(float(distance_today), 2),
+            'blood_pressure': blood_pressure,
+            'heart_rate': int(latest_hr) if latest_hr else None
+        }, status=status.HTTP_200_OK)

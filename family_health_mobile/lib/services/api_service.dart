@@ -598,6 +598,24 @@ class ApiService {
     return res != null;
   }
 
+  static Future<bool> logHealthMetric(String type, double value) async {
+    final payload = {
+      'metric_type': type,
+      'value': value,
+    };
+    final res = await _sendMutation(
+      '/health/metrics/',
+      'POST',
+      payload,
+      () async => http.post(
+        Uri.parse('$baseUrl/health/metrics/'),
+        headers: await _getHeaders(),
+        body: jsonEncode(payload),
+      ),
+    );
+    return res != null;
+  }
+
   static Future<Map<String, dynamic>?> getHealthSummary({String range = 'daily'}) async {
     try {
       final headers = await _getHeaders();
@@ -607,6 +625,22 @@ class ApiService {
       );
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getTodayHealthSummary() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/health/summary/today/'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
       }
       return null;
     } catch (e) {

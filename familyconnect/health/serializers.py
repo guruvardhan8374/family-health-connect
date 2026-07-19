@@ -31,6 +31,8 @@ class HealthGoalSerializer(serializers.ModelSerializer):
 
 
 class HealthMetricSerializer(serializers.ModelSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
     class Meta:
         model = HealthMetric
         fields = '__all__'

@@ -101,29 +101,31 @@ if _redis_url:
 # Use PostgreSQL if DATABASE_URL is set, otherwise SQLite for development
 _database_url = config('DATABASE_URL', default='')
 if _database_url:
-    import re
-    _match = re.match(
-        r'postgres(?:ql)?://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:]+):(?P<port>\d+)/(?P<name>.+)',
-        _database_url
-    )
-    if _match:
-        DATABASES = {
-            'default': {
-                'ENGINE': 'django.db.backends.postgresql',
-                'NAME': _match.group('name'),
-                'USER': _match.group('user'),
-                'PASSWORD': _match.group('password'),
-                'HOST': _match.group('host'),
-                'PORT': _match.group('port'),
+    from urllib.parse import urlparse, parse_qs
+    parsed = urlparse(_database_url)
+    
+    # Extract clean database name (strip query params)
+    db_name = parsed.path.lstrip('/')
+    if '?' in db_name:
+        db_name = db_name.split('?')[0]
+        
+    # Extract query params for options (like sslmode)
+    query_params = parse_qs(parsed.query)
+    ssl_mode = query_params.get('sslmode', ['require'])[0]
+    
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': db_name,
+            'USER': parsed.username,
+            'PASSWORD': parsed.password,
+            'HOST': parsed.hostname,
+            'PORT': parsed.port or 5432,
+            'OPTIONS': {
+                'sslmode': ssl_mode,
             }
         }
-    else:
-        DATABASES = {
-            'default': {
-                'ENGINE': 'django.db.backends.sqlite3',
-                'NAME': BASE_DIR / 'db.sqlite3',
-            }
-        }
+    }
 else:
     DATABASES = {
         'default': {

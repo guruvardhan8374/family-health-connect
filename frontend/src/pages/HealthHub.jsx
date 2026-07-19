@@ -71,24 +71,57 @@ export default function HealthHub() {
   }, [fetchHealthSummary]);
 
   // Real-time synchronization
-  const handleVitalsUpdate = (snapshot) => {
+  const currentUserId = parseInt(localStorage.getItem('user_id') || '0');
+
+  const handleVitalsUpdate = useCallback((snapshot) => {
+    if (!snapshot) return;
     setSyncFlash(true);
     setTimeout(() => setSyncFlash(false), 2500);
-    // Reload data on live updates
-    fetchFamilySummary();
-    fetchHealthSummary();
-  };
 
-  const handleAlertUpdate = (newAlerts) => {
+    // Update familyData locally for the user who updated
+    setFamilyData(prev => prev.map(member => {
+      const matchId = snapshot.user_id || snapshot.user;
+      if (member.user_id === matchId || (!matchId && member.user_id === currentUserId)) {
+        return {
+          ...member,
+          latest_snapshot: snapshot
+        };
+      }
+      return member;
+    }));
+
+    // If it's for the current user, update summaryData metrics instantly
+    const matchId = snapshot.user_id || snapshot.user;
+    if (matchId === currentUserId || !matchId) {
+      setSummaryData(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          latest_heart_rate: snapshot.heart_rate ?? prev.latest_heart_rate,
+          today_steps: snapshot.steps ?? prev.today_steps,
+          latest_spo2: snapshot.spo2 ?? prev.latest_spo2,
+          today_sleep: snapshot.sleep_hours ?? prev.today_sleep,
+          today_calories: snapshot.calories ?? prev.today_calories,
+          today_hydration: snapshot.hydration ?? prev.today_hydration,
+          latest_bmi: snapshot.bmi ?? prev.latest_bmi,
+          today_distance: snapshot.distance ?? prev.today_distance,
+        };
+      });
+    }
+  }, [currentUserId]);
+
+  const handleAlertUpdate = useCallback((newAlerts) => {
     setAlerts(newAlerts);
-  };
+  }, []);
 
   useHealthWebSocket(handleVitalsUpdate, handleAlertUpdate);
 
   // Sync event from sync context
-  useSyncEvent('health.update', () => {
-    handleVitalsUpdate();
-  }, [fetchFamilySummary, fetchHealthSummary]);
+  useSyncEvent('health.update', (event) => {
+    if (event && event.data) {
+      handleVitalsUpdate(event.data);
+    }
+  }, [handleVitalsUpdate]);
 
   // Save Goal changes
   const handleSaveGoals = async (e) => {

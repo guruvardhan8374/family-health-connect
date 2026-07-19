@@ -2,19 +2,16 @@
  * SyncContext.jsx
  * ───────────────
  * Provides real-time sync events from the backend WebSocket to any React component.
+ * Also handles offline detection and automatic flushing of the offline queue.
+ *
+ * Supported events (from backend SyncConsumer):
+ *   settings.update  · health.update  · family.update  · emergency.alert
+ *   chat.message     · notification.new · reminder.update · location.update
  *
  * Usage:
- *   // 1. Wrap in SyncProvider (done in App.jsx)
- *   // 2. In any component:
- *   import { useSyncEvent } from '../contexts/SyncContext';
- *   useSyncEvent('settings.update', (event) => {
- *     if (event.section === 'theme') applyTheme(event.data);
- *   });
- *
- * Event shape (from backend SyncConsumer):
- *   { type: 'settings.update' | 'health.update' | 'family.update' | 'emergency.alert',
- *     section: string,
- *     data: object }
+ *   import { useSyncEvent, useSync } from '../contexts/SyncContext';
+ *   useSyncEvent('chat.message', (event) => { ... });
+ *   const { connected, isOnline } = useSync();
  */
 
 import {
@@ -26,6 +23,8 @@ import {
   useState,
 } from 'react';
 import SyncWS from '../utils/syncWebSocket';
+import OfflineQueue from '../utils/offlineQueue';
+import api from '../utils/api';
 
 const SyncContext = createContext(null);
 
@@ -36,12 +35,11 @@ class EventBus {
   on(type, fn) {
     if (!this._listeners[type]) this._listeners[type] = new Set();
     this._listeners[type].add(fn);
-    return () => this._listeners[type].delete(fn);   // returns unsubscribe fn
+    return () => this._listeners[type].delete(fn);
   }
 
   emit(type, payload) {
     (this._listeners[type] || new Set()).forEach((fn) => fn(payload));
-    // Also emit '*' for catch-all listeners
     (this._listeners['*'] || new Set()).forEach((fn) => fn(payload));
   }
 }
@@ -52,13 +50,16 @@ const bus = new EventBus();
 
 export function SyncProvider({ children }) {
   const [connected, setConnected] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingCount, setPendingCount] = useState(OfflineQueue.getAll().length);
   const tokenRef = useRef(null);
 
+  // ── Forward WebSocket events to the event bus ──────────────────────────────
   const handleMessage = useCallback((event) => {
-    // Forward every WS event to the bus
     bus.emit(event.type, event);
   }, []);
 
+  // ── WebSocket connect / reconnect ──────────────────────────────────────────
   useEffect(() => {
     const connectIfLoggedIn = () => {
       const token = localStorage.getItem('access_token');
@@ -71,17 +72,14 @@ export function SyncProvider({ children }) {
       }
     };
 
-    // Connect immediately if already logged in
     connectIfLoggedIn();
 
-    // Re-check on storage changes (login / token refresh)
     const onStorage = (e) => {
       if (e.key === 'access_token') {
         if (e.newValue) {
           tokenRef.current = e.newValue;
           SyncWS.updateToken(e.newValue);
         } else {
-          // Token removed → logout
           SyncWS.disconnect();
           setConnected(false);
           tokenRef.current = null;
@@ -90,8 +88,6 @@ export function SyncProvider({ children }) {
     };
 
     window.addEventListener('storage', onStorage);
-
-    // Poll for token every 5 s (catches same-tab logins where storage event doesn't fire)
     const pollId = setInterval(connectIfLoggedIn, 5000);
 
     return () => {
@@ -101,26 +97,51 @@ export function SyncProvider({ children }) {
     };
   }, [handleMessage]);
 
+  // ── Offline / online detection ─────────────────────────────────────────────
+  useEffect(() => {
+    const onOnline = async () => {
+      setIsOnline(true);
+      console.info('[SyncContext] Back online — flushing offline queue...');
+      if (OfflineQueue.hasPending()) {
+        await OfflineQueue.flush(api);
+        setPendingCount(OfflineQueue.getAll().length);
+      }
+    };
+
+    const onOffline = () => {
+      setIsOnline(false);
+      setConnected(false);
+      console.warn('[SyncContext] Went offline.');
+    };
+
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
   return (
-    <SyncContext.Provider value={{ connected }}>
+    <SyncContext.Provider value={{ connected, isOnline, pendingCount, bus }}>
       {children}
     </SyncContext.Provider>
   );
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+// ─── Hooks ────────────────────────────────────────────────────────────────────
 
 /**
  * Subscribe to a specific sync event type.
- *
- * @param {string} eventType - e.g. 'settings.update', 'health.update'
- * @param {Function} handler - called with the full event object each time it fires
- * @param {Array} deps       - extra dependencies for useCallback (like normal)
+ * @param {string} eventType  e.g. 'chat.message', 'health.update'
+ * @param {Function} handler  called with the full event object each time
+ * @param {Array} deps        extra deps for useCallback
  */
 export function useSyncEvent(eventType, handler, deps = []) {
   const stableHandler = useCallback(handler, deps); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    return bus.on(eventType, stableHandler);       // returns unsubscribe
+    return bus.on(eventType, stableHandler);
   }, [eventType, stableHandler]);
 }
 

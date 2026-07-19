@@ -6,8 +6,10 @@ import { useState, useEffect, useRef } from 'react';
  */
 export default function useHealthWebSocket(onUpdate, onAlert) {
   const [isConnected, setIsConnected] = useState(false);
+  const [latestSnapshot, setLatestSnapshot] = useState(null);
   const socketRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
+  const heartbeatIntervalRef = useRef(null);
 
   useEffect(() => {
     const token = localStorage.getItem('access_token');
@@ -25,13 +27,21 @@ export default function useHealthWebSocket(onUpdate, onAlert) {
       ws.onopen = () => {
         console.log('Health WebSocket connected.');
         setIsConnected(true);
+        
+        // Start heartbeat ping to keep connection alive
+        heartbeatIntervalRef.current = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 30000);
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'health.update' && onUpdate) {
-            onUpdate(data.snapshot);
+          if (data.type === 'health.update') {
+            setLatestSnapshot(data.snapshot);
+            if (onUpdate) onUpdate(data.snapshot);
           } else if (data.type === 'health.alert' && onAlert) {
             onAlert(data.alerts);
           }
@@ -43,6 +53,9 @@ export default function useHealthWebSocket(onUpdate, onAlert) {
       ws.onclose = (event) => {
         console.log('Health WebSocket disconnected. Code:', event.code);
         setIsConnected(false);
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
+        }
         if (event.code !== 4001) {
           // Attempt reconnect
           reconnectTimeoutRef.current = setTimeout(connect, 3000);
@@ -64,8 +77,11 @@ export default function useHealthWebSocket(onUpdate, onAlert) {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+      }
     };
   }, [onUpdate, onAlert]);
 
-  return { isConnected };
+  return { isConnected, latestSnapshot };
 }

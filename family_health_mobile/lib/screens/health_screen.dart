@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/sync_service.dart';
 import '../services/health_service.dart';
+import '../services/health_sync_service.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -34,7 +35,6 @@ class _HealthScreenState extends State<HealthScreen> {
   double _distanceGoal = 5.0;
 
   StreamSubscription? _syncSubscription;
-  Timer? _healthSyncTimer;
 
   @override
   void initState() {
@@ -50,33 +50,51 @@ class _HealthScreenState extends State<HealthScreen> {
   @override
   void dispose() {
     _syncSubscription?.cancel();
-    _healthSyncTimer?.cancel();
+    HealthService.instance.stopLiveMonitoring();
+    HealthSyncService.instance.disconnect();
     super.dispose();
+  }
+
+  Future<void> _loadCachedVitals() async {
+    final cached = await HealthService.instance.getLastCachedSnapshot();
+    if (cached != null && mounted) {
+      setState(() {
+        _heartRate = (cached['heart_rate'] ?? '--').toString();
+        _steps = (cached['steps'] ?? '0').toString();
+        _calories = (cached['calories'] ?? '0').toString();
+        _distance = (cached['distance'] ?? '0.0').toString();
+        _sleep = (cached['sleep_hours'] ?? '--').toString();
+        _spo2 = (cached['spo2'] ?? '--').toString();
+        _hydration = (cached['hydration'] ?? '--').toString();
+        _weight = (cached['weight'] ?? '--').toString();
+        _bloodPressure = (cached['blood_pressure'] ?? '--/--').toString();
+      });
+    }
   }
 
   Future<void> _initHealthSync() async {
     // 1. Fetch current health records and goals
     await _fetchData();
-    // 2. Perform initial Health Connect sync
-    await _syncHealthConnect();
-    // 3. Periodic sync every 60 seconds
-    _healthSyncTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      _syncHealthConnect();
-    });
-  }
-
-  Future<void> _syncHealthConnect() async {
-    try {
-      final snapshot = await HealthService.instance.fetchTodaySnapshot();
-      // Post today's data to Django backend
-      final success = await ApiService.syncHealthSnapshot(snapshot);
-      if (success) {
-        debugPrint('Health Connect synced successfully.');
-        _fetchData();
+    // 2. Load cached vitals first for offline support
+    await _loadCachedVitals();
+    // 3. Connect WebSocket for live sync
+    await HealthSyncService.instance.connect();
+    // 4. Start live monitoring (checks Google Fit every 30s)
+    HealthService.instance.startLiveMonitoring((snapshot) {
+      if (mounted) {
+        setState(() {
+          _heartRate = (snapshot['heart_rate'] ?? '--').toString();
+          _steps = (snapshot['steps'] ?? '0').toString();
+          _calories = (snapshot['calories'] ?? '0').toString();
+          _distance = (snapshot['distance'] ?? '0.0').toString();
+          _sleep = (snapshot['sleep_hours'] ?? '--').toString();
+          _spo2 = (snapshot['spo2'] ?? '--').toString();
+          _hydration = (snapshot['hydration'] ?? '--').toString();
+          _weight = (snapshot['weight'] ?? '--').toString();
+          _bloodPressure = (snapshot['blood_pressure'] ?? '--/--').toString();
+        });
       }
-    } catch (e) {
-      debugPrint('Health Connect sync failed: $e');
-    }
+    });
   }
 
   Future<void> _fetchData() async {
@@ -386,7 +404,9 @@ class _HealthScreenState extends State<HealthScreen> {
             icon: const Icon(Icons.sync_rounded, color: Color(0xFF14B8A6)),
             onPressed: () {
               setState(() => _isLoading = true);
-              _syncHealthConnect();
+              HealthService.instance.stopLiveMonitoring();
+              HealthSyncService.instance.disconnect();
+              _initHealthSync();
             },
           ),
         ],
@@ -399,7 +419,7 @@ class _HealthScreenState extends State<HealthScreen> {
           // Emergency Vital Alert
           if (hasEmergency)
             Container(
-              margin: const EdgeInsets.bottom(16),
+              margin: const EdgeInsets.only(bottom: 16),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: alertColor.withOpacity(0.1),
@@ -665,7 +685,7 @@ class _VitalCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.between,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Icon(icon, color: color, size: 24),
               SizedBox(

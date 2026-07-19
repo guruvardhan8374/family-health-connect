@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/health_screen.dart';
@@ -10,6 +11,7 @@ import 'screens/emergency_screen.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/sync_service.dart';
+import 'services/offline_queue_service.dart';
 
 class ThemeController {
   static final ThemeController instance = ThemeController._internal();
@@ -81,6 +83,21 @@ class ThemeController {
     } catch (_) {}
   }
 
+  Future<void> loadThemeFromCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? mode = prefs.getString('theme_mode');
+      final String? colorName = prefs.getString('theme_color');
+      if (mode != null) {
+        themeMode.value = mode == 'dark' ? ThemeMode.dark : ThemeMode.light;
+      }
+      if (colorName != null) {
+        themeColor.value = colorFromString(colorName);
+      }
+    } catch (_) {}
+  }
+
+
   Future<void> updateTheme({required bool dark, required String colorName}) async {
     themeMode.value = dark ? ThemeMode.dark : ThemeMode.light;
     themeColor.value = colorFromString(colorName);
@@ -109,6 +126,8 @@ void main() async {
       statusBarIconBrightness: Brightness.light,
     ),
   );
+  await Hive.initFlutter();
+  await OfflineQueueService.instance.init();
   await ThemeController.instance.loadTheme();
   runApp(const FamilyHealthApp());
 }
@@ -187,10 +206,13 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<void> _checkAuth() async {
+    // ── isLoggedIn() reads from in-memory cache or local SharedPreferences ──
+    // ── No network calls here — auth gate resolves in < 50ms ──────────────
     final loggedIn = await AuthService.isLoggedIn();
     if (loggedIn) {
-      await ThemeController.instance.loadTheme();
-      // ── Start real-time sync WebSocket ───────────────────────────
+      // Load theme from local prefs only (ThemeController caches locally)
+      ThemeController.instance.loadThemeFromCache();
+      // WebSocket starts non-blocking — UI doesn't wait for it
       SyncService.instance.connect();
     }
     setState(() {

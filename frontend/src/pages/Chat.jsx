@@ -27,6 +27,8 @@ export default function Chat() {
   const [typingUsers, setTypingUsers] = useState({});
   const [onlineStatus, setOnlineStatus] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
+  const [checkingFamily, setCheckingFamily] = useState(true);
+  const [hasFamily, setHasFamily] = useState(false);
 
   // Stories State
   const [stories, setStories] = useState([]);
@@ -51,15 +53,34 @@ export default function Chat() {
   const scrollRef = useRef(null);
   const pcRef = useRef(null);
 
-  // One-time initialization on mount
+  // Verify family membership first on mount, and then fetch details
   useEffect(() => {
-    fetchConvs();
-    fetchStories();
+    const checkFamilyAndInit = async () => {
+      try {
+        const groupsRes = await api.get('/family/groups/');
+        const groups = groupsRes.data.results || groupsRes.data || [];
+        if (groups.length === 0) {
+          setHasFamily(false);
+        } else {
+          setHasFamily(true);
+          await fetchConvs();
+          await fetchStories();
+        }
+      } catch (err) {
+        console.error("Failed to verify family circle status:", err);
+        if (err.response?.status !== 401) {
+          setHasFamily(false);
+        }
+      } finally {
+        setCheckingFamily(false);
+      }
+    };
+    checkFamilyAndInit();
   }, []);
 
   // Establish real-time WebSocket connection to Django Channels ASGI on activeConv change
   useEffect(() => {
-    if (!activeConv) return;
+    if (!activeConv || !hasFamily) return;
 
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
     const wsBaseUrl = apiBaseUrl.replace(/^http/, 'ws');
@@ -72,7 +93,6 @@ export default function Chat() {
 
     ws.onopen = () => {
       console.log("[WebSocket] Connected successfully!");
-      // Mock typing or online updates if wanted locally
       setOnlineStatus(prev => ({ ...prev, [currentUser.id]: 'online' }));
     };
 
@@ -81,7 +101,6 @@ export default function Chat() {
         const data = JSON.parse(event.data);
         console.log("[WebSocket] Received broadcast payload:", data);
         
-        // Match message type
         if (data.type === 'chat_message') {
           const formattedMsg = {
             id: data.id,
@@ -100,15 +119,11 @@ export default function Chat() {
           };
 
           setMessages(prev => {
-            // Deduplicate if already present locally (e.g. from fast fallback send)
             if (prev.some(m => m.id === formattedMsg.id)) return prev;
             return [...prev, formattedMsg];
           });
 
-          // Perform background mark-read
           api.post('/chat/messages/mark-read/', { conversation: activeConv.id }).catch(err => console.error(err));
-          
-          // Update conversation last message in side bar
           updateConvList(formattedMsg);
         }
       } catch (err) {
@@ -128,7 +143,7 @@ export default function Chat() {
       console.log("[WebSocket] Cleaning up connection...");
       ws.close();
     };
-  }, [activeConv]);
+  }, [activeConv, hasFamily]);
 
   const fetchStories = async () => {
     try {
@@ -297,21 +312,45 @@ export default function Chat() {
     setConversations(prev => prev.map(c => c.id === msg.conversation ? { ...c, latest_message: msg } : c));
   };
 
-  const fetchMessages = async () => {
-    setLoading(true);
+  const fetchMessages = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await api.get(`/chat/messages/?conversation=${activeConv.id}`);
       const msgs = res.data.results || res.data || [];
-      // MessageViewSet queryset orders by -timestamp (newest first).
-      // Slice and reverse it to render chronologically from top to bottom.
-      setMessages(msgs.slice().reverse());
-      // Mark read via HTTP
+      const reversed = msgs.slice().reverse();
+      
+      setMessages(prev => {
+        // Only update state if message IDs list has changed to avoid unnecessary re-renders/scrolls
+        if (prev.length === reversed.length && prev.every((m, idx) => m.id === reversed[idx]?.id)) {
+          return prev;
+        }
+        return reversed;
+      });
+      
       api.post('/chat/messages/mark-read/', { conversation: activeConv.id }).catch(err => console.error(err));
-    } catch (err) { console.error(err); } finally { setLoading(false); }
+    } catch (err) { 
+      console.error(err); 
+    } finally { 
+      if (!silent) setLoading(false); 
+    }
   };
 
   useEffect(() => { 
     if (activeConv) fetchMessages();
+  }, [activeConv]);
+
+  // Periodic polling fallback for messages when WebSocket is closed/unsupported
+  useEffect(() => {
+    if (!activeConv) return;
+    
+    const interval = setInterval(() => {
+      const isWsOpen = socketRef.current && socketRef.current.readyState === WebSocket.OPEN;
+      if (!isWsOpen) {
+        fetchMessages(true);
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
   }, [activeConv]);
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
@@ -323,26 +362,58 @@ export default function Chat() {
     const textContent = input.trim();
     setInput('');
 
-    // If WebSocket connection is active, transmit message in real-time
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      const wsPayload = {
-        content: textContent,
-        message_type: 'TEXT'
-      };
-      socketRef.current.send(JSON.stringify(wsPayload));
-    } else {
-      // Fallback: Send over HTTP if WebSocket is temporarily down
-      const payload = { conversation: activeConv.id, content: textContent, message_type: 'TEXT' };
-      try {
-        const res = await api.post('/chat/messages/', payload);
-        const formattedMsg = res.data.results || res.data;
-        setMessages(prev => [...prev, formattedMsg]);
-        updateConvList(formattedMsg);
-      } catch (err) {
-        console.error("HTTP fallback message send failed:", err);
+    // Always use HTTP POST as primary to guarantee storage and compatibility
+    const payload = { conversation: activeConv.id, content: textContent, message_type: 'TEXT' };
+    try {
+      const res = await api.post('/chat/messages/', payload);
+      const formattedMsg = res.data.results || res.data;
+      setMessages(prev => {
+        if (prev.some(m => m.id === formattedMsg.id)) return prev;
+        return [...prev, formattedMsg];
+      });
+      updateConvList(formattedMsg);
+      
+      // Also send via WebSocket if open so other connected clients receive it instantly (in addition to HTTP broadcast)
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          content: textContent,
+          message_type: 'TEXT'
+        }));
       }
+    } catch (err) {
+      console.error("HTTP message send failed:", err);
+      alert("Failed to send message. Please try again.");
     }
   };
+
+  if (checkingFamily) {
+    return (
+      <div className="flex flex-col justify-center items-center h-96 space-y-4">
+        <Loader2 className="w-12 h-12 animate-spin text-brand-500" />
+        <p className="text-navy-400 font-medium">Securing connection to Family Circles...</p>
+      </div>
+    );
+  }
+
+  if (!hasFamily) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center space-y-6 max-w-md mx-auto bg-white rounded-3xl border border-navy-100 shadow-xl my-12 animate-in fade-in duration-300">
+        <div className="w-20 h-20 bg-brand-500/10 rounded-full flex items-center justify-center text-brand-500">
+          <Users className="w-10 h-10" />
+        </div>
+        <h3 className="text-2xl font-black text-navy-950">Join a Family Circle First</h3>
+        <p className="text-navy-500 text-sm">
+          To start using Family Chat, you must first create a Family Circle or join an existing one. Let's get you set up!
+        </p>
+        <a 
+          href="/family" 
+          className="w-full bg-brand-500 hover:bg-brand-600 text-white font-extrabold rounded-2xl py-4 flex items-center justify-center space-x-2 transition-all shadow-lg shadow-brand-500/20"
+        >
+          <span>Go to Family Directory</span>
+        </a>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen md:h-[calc(100vh-120px)] flex bg-white/50 md:backdrop-blur-xl md:rounded-[3rem] md:border border-white/20 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-500">

@@ -230,7 +230,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                         items: const [
                           DropdownMenuItem(value: 'PARENT', child: Text('Parent')),
                           DropdownMenuItem(value: 'CHILD', child: Text('Child')),
-                          DropdownMenuItem(value: 'ELDERLY', child: Text('Elderly Member')),
+                          DropdownMenuItem(value: 'ELDER', child: Text('Elderly Member')),
                           DropdownMenuItem(value: 'SPOUSE', child: Text('Spouse')),
                           DropdownMenuItem(value: 'OTHER', child: Text('Other')),
                         ],
@@ -258,7 +258,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                       items: const [
                         DropdownMenuItem(value: 'PARENT', child: Text('Parent')),
                         DropdownMenuItem(value: 'CHILD', child: Text('Child')),
-                        DropdownMenuItem(value: 'ELDERLY', child: Text('Elderly Member')),
+                        DropdownMenuItem(value: 'ELDER', child: Text('Elderly Member')),
                         DropdownMenuItem(value: 'SPOUSE', child: Text('Spouse')),
                         DropdownMenuItem(value: 'OTHER', child: Text('Other')),
                       ],
@@ -384,6 +384,26 @@ class _FamilyScreenState extends State<FamilyScreen> {
   }
 
 
+  String _getRoleDisplay(String label) {
+    switch (label.toUpperCase()) {
+      case 'HEAD':
+        return 'Family Head';
+      case 'PARENT':
+        return 'Parent';
+      case 'CHILD':
+        return 'Child';
+      case 'ELDER':
+      case 'ELDERLY':
+        return 'Elderly Member';
+      case 'SPOUSE':
+        return 'Spouse';
+      case 'OTHER':
+        return 'Other';
+      default:
+        return label;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -488,7 +508,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                     final username = userDetails != null ? (userDetails['username'] ?? '') : (member['name'] ?? 'Unknown');
                     final email = userDetails != null ? (userDetails['email'] ?? '') : '';
                     final phone = userDetails != null ? (userDetails['phone_number'] ?? '') : '';
-                    final labelStr = (member['label'] ?? 'Member').toString();
+                    final labelStr = _getRoleDisplay((member['label'] ?? 'Member').toString());
                     final statusStr = (member['is_approved'] == true ? 'Active' : 'Pending').toString();
 
                     return Container(

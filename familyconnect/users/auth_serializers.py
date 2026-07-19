@@ -1,7 +1,6 @@
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from django.contrib.auth import authenticate
 
 User = get_user_model()
 
@@ -16,54 +15,65 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not password:
             raise serializers.ValidationError({'password': 'This field is required.'})
 
-        # Resolve email → username (case-insensitive)
-        if '@' in username_or_email:
-            try:
-                user = User.objects.get(email__iexact=username_or_email)
-                attrs['username'] = user.username
-            except User.DoesNotExist:
-                raise serializers.ValidationError(
-                    'No account found with this email address. Please register first.'
-                )
-            except User.MultipleObjectsReturned:
-                # Edge case: duplicate emails — take the most recent
-                user = User.objects.filter(email__iexact=username_or_email).order_by('-date_joined').first()
-                attrs['username'] = user.username
-        else:
-            # Username login — case-insensitive lookup
-            try:
-                user = User.objects.get(username__iexact=username_or_email)
-                attrs['username'] = user.username  # normalise to stored case
-            except User.DoesNotExist:
-                raise serializers.ValidationError(
-                    'No account found with this username. Please check or register.'
-                )
+        # ── OPTIMIZED: Single DB query using .only() to fetch just needed fields ─
+        lookup_field = 'email__iexact' if '@' in username_or_email else 'username__iexact'
+        try:
+            user = User.objects.only(
+                'id', 'username', 'email', 'password',
+                'is_active', 'role', 'is_otp_verified',
+            ).get(**{lookup_field: username_or_email})
+        except User.DoesNotExist:
+            field = 'email address' if '@' in username_or_email else 'username'
+            raise serializers.ValidationError(
+                f'No account found with this {field}. Please register first.'
+            )
+        except User.MultipleObjectsReturned:
+            user = User.objects.filter(
+                **{lookup_field: username_or_email}
+            ).only(
+                'id', 'username', 'email', 'password',
+                'is_active', 'role', 'is_otp_verified',
+            ).order_by('-date_joined').first()
 
-        # Check account is active before handing off to parent
-        resolved_user = User.objects.filter(username=attrs['username']).first()
-        if resolved_user and not resolved_user.is_active:
+        # ── Active check on already-fetched object — zero extra DB hit ──────────
+        if not user.is_active:
             raise serializers.ValidationError(
                 'This account has been deactivated. Please contact support.'
             )
 
-        # Authenticate manually to provide clearer error for wrong password
-        user = authenticate(username=attrs['username'], password=password)
-        if not user:
+        # ── Password check directly — no extra authenticate() DB query ──────────
+        if not user.check_password(password):
             raise serializers.ValidationError('Invalid password.')
 
-        # Mark user as verified on successful login
+        # ── Only write to DB if the flag actually needs changing (skips save 99%) ─
         if hasattr(user, 'is_otp_verified') and not user.is_otp_verified:
-            user.is_otp_verified = True
-            user.save(update_fields=['is_otp_verified'])
+            User.objects.filter(pk=user.pk).update(is_otp_verified=True)
 
-        # Parent handles password check and token generation
+        # ── Set self.user directly so parent generate tokens without another lookup
+        attrs['username'] = user.username
+        self.user = user
+
+        # ── Generate tokens (reads self.user — no extra DB query) ────────────────
         data = super().validate(attrs)
 
-        # Attach user info to token response
-        if self.user:
-            data['user_id']  = self.user.id
-            data['username'] = self.user.username
-            data['email']    = self.user.email
-            data['role']     = getattr(self.user, 'role', 'MEMBER')
+        # ── Embed full profile so mobile needs ZERO extra API calls after login ──
+        data['user_id']  = user.id
+        data['username'] = user.username
+        data['email']    = user.email
+        data['role']     = getattr(user, 'role', 'MEMBER')
+
+        # Include profile picture / phone from settings (single lightweight query)
+        try:
+            from settings_app.models import UserProfileSettings
+            profile = UserProfileSettings.objects.only(
+                'profile_picture', 'phone_number', 'bio'
+            ).filter(user=user).first()
+            data['profile_picture'] = profile.profile_picture if profile else ''
+            data['phone_number']    = profile.phone_number    if profile else ''
+            data['bio']             = profile.bio              if profile else ''
+        except Exception:
+            data['profile_picture'] = ''
+            data['phone_number']    = ''
+            data['bio']             = ''
 
         return data

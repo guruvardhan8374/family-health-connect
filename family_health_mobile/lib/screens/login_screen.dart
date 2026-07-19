@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
+import '../services/sync_service.dart';
 import '../main.dart';
 import 'register_screen.dart';
 
@@ -35,31 +35,58 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ─────────────────────── Password Login ────────────────────────────────────
   Future<void> _login() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    final result = await ApiService.login(
-      _usernameController.text.trim(),
-      _passwordController.text.trim(),
-    );
-    if (result != null && result['access'] != null) {
-      await AuthService.saveToken(
-        token: result['access'],
-        username: _usernameController.text.split('@')[0],
-        userId: result['user_id']?.toString() ?? '1',
-      );
-      if (mounted) {
-        Navigator.pushReplacement(
-            context, MaterialPageRoute(builder: (_) => const MainShell()));
-      }
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (username.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Please enter your username and password.');
+      return;
+    }
+
+    setState(() { _isLoading = true; _error = null; });
+
+    final result = await ApiService.login(username, password);
+
+    if (result != null && result['success'] == true) {
+      final data = result['data'] as Map<String, dynamic>;
+      // ── 1. Save token + full profile embedded in response (zero extra calls) ─
+      await Future.wait([
+        AuthService.saveToken(
+          token:        data['access'] ?? '',
+          username:     data['username'] ?? username.split('@')[0],
+          userId:       data['user_id']?.toString() ?? '',
+          refreshToken: data['refresh'],
+        ),
+        AuthService.saveProfile(
+          email:          data['email']          ?? '',
+          role:           data['role']           ?? 'MEMBER',
+          profilePicture: data['profile_picture'] ?? '',
+          phoneNumber:    data['phone_number']   ?? '',
+          bio:            data['bio']            ?? '',
+        ),
+      ]);
+
+      if (!mounted) return;
+
+      // ── 2. Navigate immediately — don't wait for background work ────────────
+      Navigator.pushReplacement(
+          context, MaterialPageRoute(builder: (_) => const MainShell()));
+
+      // ── 3. Start WebSocket + preload data in background after navigation ─────
+      SyncService.instance.connect();
+
     } else {
+      final errorType = result?['error'] ?? 'network_error';
       setState(() {
-        _error = 'Invalid username or password. Please try again.';
+        _error = (errorType == 'timeout' || errorType == 'network_error')
+            ? 'Connection timed out. Please check your internet and try again.'
+            : 'Invalid username or password. Please try again.';
         _isLoading = false;
       });
     }
   }
+
+
 
 
 

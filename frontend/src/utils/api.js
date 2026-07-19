@@ -1,4 +1,5 @@
 import axios from 'axios';
+import OfflineQueue from './offlineQueue';
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -59,6 +60,40 @@ api.interceptors.response.use(
     const status      = error.response?.status;
     const errorCode   = error.response?.data?.code   || '';
     const errorDetail = error.response?.data?.detail || '';
+
+    // ── Handle offline queueing for failed mutations ──────────────────────────
+    if (!error.response && originalRequest) {
+      const method = originalRequest.method?.toLowerCase();
+      const writeMethods = ['post', 'put', 'patch', 'delete'];
+      if (writeMethods.includes(method)) {
+        try {
+          const payload = originalRequest.data ? JSON.parse(originalRequest.data) : {};
+          const endpoint = originalRequest.url.replace(originalRequest.baseURL || '', '');
+          
+          // Skip public endpoints and refresh token endpoints
+          const isPublic = 
+            endpoint.includes('/token/') || 
+            endpoint.includes('/register/') || 
+            endpoint.includes('/verify-otp/') || 
+            endpoint.includes('/password-reset/') ||
+            endpoint.includes('/verify-phone-otp/') ||
+            endpoint.includes('/send-phone-otp/') ||
+            endpoint.includes('/health/');
+
+          if (!isPublic) {
+            OfflineQueue.push({
+              endpoint,
+              method: originalRequest.method.toUpperCase(),
+              payload,
+            });
+            console.warn(`[API] Went offline. Enqueued mutation: ${originalRequest.method.toUpperCase()} ${endpoint}`);
+            return Promise.resolve({ data: { status: 'queued', offline: true } });
+          }
+        } catch (e) {
+          console.error('[API] Failed to queue offline request:', e);
+        }
+      }
+    }
 
     // Never try to refresh for Google-auth users — their Firebase tokens
     // expire and must be re-obtained via Google sign-in, not refresh endpoint

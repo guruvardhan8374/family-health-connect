@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/sync_service.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -16,11 +18,33 @@ class _ChatScreenState extends State<ChatScreen> {
   int? _conversationId;
 
   String _myUsername = '';
+  StreamSubscription? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadUsernameAndFetch();
+    _syncSubscription = SyncService.instance.stream.listen((event) {
+      if (event['type'] == 'chat.message') {
+        final data = event['data'];
+        if (data != null && data['conversation_id'] == _conversationId) {
+          final senderUsername = data['sender_username'] ?? 'Unknown';
+          final messageId = data['id'];
+          if (!_messages.any((m) => m['id'] == messageId)) {
+            if (mounted) {
+              setState(() {
+                _messages.add({
+                  'id': messageId,
+                  'content': data['content'],
+                  'sender_details': {'username': senderUsername},
+                  'timestamp': data['timestamp'],
+                });
+              });
+            }
+          }
+        }
+      }
+    });
   }
 
   Future<void> _loadUsernameAndFetch() async {
@@ -220,6 +244,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _syncSubscription?.cancel();
     super.dispose();
   }
 }

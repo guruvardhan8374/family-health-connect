@@ -123,6 +123,15 @@ class HealthSnapshotViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return HealthSnapshot.objects.filter(user=self.request.user)
 
+    @action(detail=False, methods=['get'])
+    def live(self, request):
+        """Get the single most recent health snapshot for the authenticated user."""
+        snapshot = HealthSnapshot.objects.filter(user=request.user).first()
+        if not snapshot:
+            return Response({'detail': 'No snapshots found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(snapshot)
+        return Response(serializer.data)
+
     def perform_create(self, serializer):
         snapshot = serializer.save(user=self.request.user)
         # Check thresholds and send WebSocket broadcasts
@@ -134,10 +143,11 @@ class HealthSnapshotViewSet(viewsets.ModelViewSet):
             channel_layer = get_channel_layer()
             user = self.request.user
             # Broadcast to the user's personal sync group
-            group = f'user_{user.id}'
+            group = f'sync_user_{user.id}'
             async_to_sync(channel_layer.group_send)(group, {
-                'type': 'sync.event',
-                'event': {'type': 'health.update'},
+                'type': 'health_update',
+                'section': 'snapshot',
+                'data': serializer.data
             })
         except Exception:
             pass

@@ -107,7 +107,38 @@ class MessageViewSet(viewsets.ModelViewSet):
         return Message.objects.none()
 
     def perform_create(self, serializer):
-        serializer.save(sender=self.request.user)
+        message = serializer.save(sender=self.request.user)
+        
+        # Update unread count for other conversation participants
+        from django.db.models import F
+        UserConversation.objects.filter(conversation=message.conversation).exclude(user=self.request.user).update(
+            unread_count=F('unread_count') + 1
+        )
+
+        # Broadcast via Channel Layer for real-time updates if Channels is active
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"chat_{message.conversation.id}",
+                    {
+                        'type': 'chat_message',
+                        'id': message.id,
+                        'sender_id': self.request.user.id,
+                        'sender_username': self.request.user.username,
+                        'content': message.content,
+                        'message_type': message.message_type,
+                        'media_url': message.media_url,
+                        'health_data': message.health_data,
+                        'timestamp': message.timestamp.isoformat()
+                    }
+                )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to broadcast chat message via channel layer: {e}")
 
     @action(detail=False, methods=['post'], url_path='mark-read')
     def mark_read(self, request):

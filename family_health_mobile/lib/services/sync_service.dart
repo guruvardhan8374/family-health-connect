@@ -1,42 +1,57 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'auth_service.dart';
+import 'offline_queue_service.dart';
+import 'api_service.dart';
+import 'app_config.dart';
 
-/// Real-time sync service — connects to the backend ws/sync/ endpoint
-/// and broadcasts typed events to all active listeners.
+/// Real-time sync service — connects to ws/sync/?token=<jwt> and
+/// broadcasts typed events to all active listeners.
+///
+/// Handles:
+///   - Auto-reconnect with exponential back-off
+///   - Connectivity detection (connectivity_plus)
+///   - Offline queue flush when back online
+///   - Typed event dispatch via broadcast stream
 ///
 /// Usage:
-///   // Start in main.dart after login
-///   SyncService.instance.connect();
-///
-///   // Listen in any widget's initState
+///   await SyncService.instance.connect();
 ///   _sub = SyncService.instance.stream.listen((event) {
-///     if (event['type'] == 'settings.update' && event['section'] == 'theme') {
-///       ThemeController.instance.loadTheme();
-///     }
+///     if (event['type'] == 'chat.message') { ... }
 ///   });
-///
-///   // Cancel in dispose()
-///   _sub.cancel();
-
 class SyncService {
   static final SyncService instance = SyncService._internal();
   SyncService._internal();
 
-  // ── Base WS URL (mirrors ApiService.baseUrl but ws(s)) ────────────────────
-  static const String _apiBase = 'http://192.168.1.6:8000';
+  // ── Base WS URL ────────────────────────────────────────────────────────────
+  static String get _apiBase => AppConfig.apiBaseUrl;
   static String get _wsBase {
-    return _apiBase.startsWith('https')
-        ? _apiBase.replaceFirst('https', 'wss')
-        : _apiBase.replaceFirst('http', 'ws');
+    final base = AppConfig.apiBaseUrl;
+    if (base.startsWith('https://')) {
+      final host = base.replaceFirst('https://', '').split('/')[0];
+      return 'wss://$host:443';
+    } else if (base.startsWith('http://')) {
+      final host = base.replaceFirst('http://', '').split('/')[0];
+      if (!host.contains(':')) {
+        return 'ws://$host:80';
+      }
+      return 'ws://$host';
+    } else {
+      return base.startsWith('https')
+          ? base.replaceFirst('https', 'wss')
+          : base.replaceFirst('http', 'ws');
+    }
   }
 
   WebSocketChannel? _channel;
   StreamController<Map<String, dynamic>>? _controller;
+  StreamSubscription? _connectivitySubscription;
   bool _manualDisconnect = false;
   int _retryCount = 0;
   static const int _maxRetries = 10;
+  bool _isOnline = true;
 
   /// Public broadcast stream — listen to receive sync events.
   Stream<Map<String, dynamic>> get stream {
@@ -44,29 +59,33 @@ class SyncService {
     return _controller!.stream;
   }
 
-  /// Connect (or reconnect) to the sync WebSocket.
-  /// Call after login. Safe to call multiple times — will no-op if already open.
+  bool get isOnline => _isOnline;
+
+  /// Initialize: connect WS + start listening for connectivity changes.
   Future<void> connect() async {
     if (_isOpen()) return;
     _manualDisconnect = false;
     _retryCount = 0;
     await _open();
+    _listenConnectivity();
   }
 
-  /// Disconnect cleanly (e.g. on logout).
+  /// Disconnect cleanly (on logout).
   void disconnect() {
     _manualDisconnect = true;
     _channel?.sink.close();
     _channel = null;
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
   }
 
-  bool _isOpen() {
-    return _channel != null;
-  }
+  // ── Internal ───────────────────────────────────────────────────────────────
+
+  bool _isOpen() => _channel != null;
 
   Future<void> _open() async {
     final token = await AuthService.getToken();
-    if (token == null) return; // Not logged in — do not attempt connection
+    if (token == null) return;
 
     final uri = Uri.parse('$_wsBase/ws/sync/?token=$token');
     try {
@@ -77,9 +96,7 @@ class SyncService {
             final event = jsonDecode(data as String) as Map<String, dynamic>;
             _controller ??= StreamController<Map<String, dynamic>>.broadcast();
             _controller!.add(event);
-          } catch (_) {
-            // Ignore malformed frames
-          }
+          } catch (_) {}
         },
         onDone: _onDisconnect,
         onError: (_) => _onDisconnect(),
@@ -96,12 +113,40 @@ class SyncService {
     if (_manualDisconnect) return;
     if (_retryCount >= _maxRetries) return;
 
-    // Check if we still have a token before retrying
     AuthService.getToken().then((token) {
-      if (token == null) return; // No token — stop retrying
+      if (token == null) return;
       final delay = Duration(seconds: (1 << _retryCount).clamp(1, 30));
       _retryCount++;
       Future.delayed(delay, _open);
+    });
+  }
+
+  void _listenConnectivity() {
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = Connectivity()
+        .onConnectivityChanged
+        .listen((List<ConnectivityResult> results) async {
+      final online = results.any((r) => r != ConnectivityResult.none);
+      final wasOffline = !_isOnline;
+      _isOnline = online;
+
+      if (online && wasOffline) {
+        // Back online — reconnect WS
+        if (!_isOpen()) {
+          _retryCount = 0;
+          await _open();
+        }
+        // Flush offline queue
+        if (OfflineQueueService.instance.hasPending) {
+          final flushed = await OfflineQueueService.instance.flush(
+            (endpoint, body) => ApiService.postRaw(endpoint, body),
+          );
+          if (flushed) {
+            // Notify listeners that sync completed
+            _controller?.add({'type': 'sync.flushed', 'data': {}});
+          }
+        }
+      }
     });
   }
 }

@@ -2,28 +2,27 @@
 sync/signals.py
 ───────────────
 Django post_save signals that push real-time updates to every client
-connected via SyncConsumer.
+connected via SyncConsumer (ws/sync/?token=<jwt>).
 
-Each signal handler:
-  1. Gets the async channel layer synchronously via async_to_sync
-  2. Sends a group_send() to  'sync_user_<user_id>'
-  3. The SyncConsumer receives the event and forwards it to every
-     WebSocket (web browser + mobile app) belonging to that user.
-
-Supported models
-────────────────
-  Settings:   ThemeSettings, NotificationSettings, PrivacySettings,
-              UserProfileSettings
-  Health:     HealthMetric, HealthAlert
-  Emergency:  SOSAlert
-  Family:     FamilyMembership
-  Chat:       Message  (supplements the existing ChatConsumer broadcast)
+Covered models
+──────────────
+  Settings:      ThemeSettings, NotificationSettings, PrivacySettings,
+                 UserProfileSettings
+  Health:        HealthMetric, HealthAlert, HealthSnapshot, HealthRecord
+  Emergency:     SOSAlert
+  Family:        FamilyMembership
+  Chat:          Message  (supplements the existing ChatConsumer broadcast)
+  Notifications: Notification, Reminder
+  Location:      LocationHistory  (pushed to every family-group member)
 """
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -33,16 +32,32 @@ def _push(user_id, event_type, section, data):
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return
-    # Convert dots to underscores for the channel layer handler name
-    handler_name = event_type.replace('.', '_')
-    async_to_sync(channel_layer.group_send)(
-        f'sync_user_{user_id}',
-        {
-            'type': handler_name,   # maps to SyncConsumer.settings_update etc.
-            'section': section,
-            'data': data,
-        }
-    )
+    try:
+        handler_name = event_type.replace('.', '_')
+        async_to_sync(channel_layer.group_send)(
+            f'sync_user_{user_id}',
+            {
+                'type': handler_name,
+                'section': section,
+                'data': data,
+            }
+        )
+    except Exception as e:
+        logger.warning(f'[sync] _push failed for user {user_id}: {e}')
+
+
+def _push_to_family(family_group, event_type, section, data):
+    """Push the same event to every member of a family group."""
+    try:
+        from family.models import FamilyMembership
+        member_ids = FamilyMembership.objects.filter(
+            family_group=family_group,
+            is_approved=True,
+        ).values_list('user_id', flat=True)
+        for uid in member_ids:
+            _push(uid, event_type, section, data)
+    except Exception as e:
+        logger.warning(f'[sync] _push_to_family failed: {e}')
 
 
 # ─── Settings signals ──────────────────────────────────────────────────────────
@@ -117,8 +132,71 @@ def on_health_alert_saved(sender, instance, created, **kwargs):
             'id': instance.id,
             'title': instance.title,
             'message': instance.message,
+            'severity': getattr(instance, 'severity', 'HIGH'),
+            'alert_type': getattr(instance, 'alert_type', ''),
             'created_at': instance.created_at.isoformat(),
         })
+
+
+@receiver(post_save, sender='health.HealthSnapshot')
+def on_health_snapshot_saved(sender, instance, created, **kwargs):
+    """Push live vitals to the user AND all family members."""
+    data = {
+        'id': instance.id,
+        'source': instance.source,
+        'recorded_at': instance.recorded_at.isoformat(),
+        'heart_rate': instance.heart_rate,
+        'steps': instance.steps,
+        'calories': instance.calories,
+        'distance': instance.distance,
+        'sleep_hours': instance.sleep_hours,
+        'spo2': instance.spo2,
+        'hydration': instance.hydration,
+        'weight': instance.weight,
+        'bmi': instance.bmi,
+        'blood_pressure': instance.blood_pressure,
+        'user_id': instance.user_id,
+    }
+    # Push to the owner
+    _push(instance.user_id, 'health.update', 'snapshot', data)
+
+    # Push to all family members (they see this person's vitals in Family view)
+    try:
+        from family.models import FamilyMembership
+        family_ids = FamilyMembership.objects.filter(
+            user_id=instance.user_id, is_approved=True
+        ).values_list('family_group_id', flat=True)
+        for fid in family_ids:
+            _push_to_family_group_id(fid, 'health.update', 'snapshot', data, exclude_user=instance.user_id)
+    except Exception as e:
+        logger.warning(f'[sync] snapshot family push failed: {e}')
+
+
+def _push_to_family_group_id(family_group_id, event_type, section, data, exclude_user=None):
+    """Push event to all members of a group by group ID."""
+    try:
+        from family.models import FamilyMembership
+        qs = FamilyMembership.objects.filter(
+            family_group_id=family_group_id, is_approved=True
+        ).values_list('user_id', flat=True)
+        for uid in qs:
+            if exclude_user and uid == exclude_user:
+                continue
+            _push(uid, event_type, section, data)
+    except Exception as e:
+        logger.warning(f'[sync] _push_to_family_group_id failed: {e}')
+
+
+@receiver(post_save, sender='family_health_records_app.HealthRecord')
+def on_health_record_saved(sender, instance, created, **kwargs):
+    action = 'created' if created else 'updated'
+    _push(instance.user_id, 'health.update', 'record', {
+        'id': instance.id,
+        'action': action,
+        'record_type': getattr(instance, 'record_type', ''),
+        'title': getattr(instance, 'title', ''),
+        'recorded_date': str(getattr(instance, 'recorded_date', '')),
+    })
 
 
 # ─── Emergency signals ─────────────────────────────────────────────────────────
@@ -126,7 +204,7 @@ def on_health_alert_saved(sender, instance, created, **kwargs):
 @receiver(post_save, sender='emergency.SOSAlert')
 def on_sos_saved(sender, instance, created, **kwargs):
     if created:
-        _push(instance.user_id, 'emergency.alert', 'sos', {
+        payload = {
             'id': instance.id,
             'message': instance.message,
             'location_lat': instance.location_lat,
@@ -134,7 +212,19 @@ def on_sos_saved(sender, instance, created, **kwargs):
             'triggered_at': instance.triggered_at.isoformat(),
             'status': instance.status,
             'triggered_by': instance.user.username if instance.user else None,
-        })
+            'user_id': instance.user_id,
+        }
+        _push(instance.user_id, 'emergency.alert', 'sos', payload)
+        # Also notify all family members
+        try:
+            from family.models import FamilyMembership
+            family_ids = FamilyMembership.objects.filter(
+                user_id=instance.user_id, is_approved=True
+            ).values_list('family_group_id', flat=True)
+            for fid in family_ids:
+                _push_to_family_group_id(fid, 'emergency.alert', 'sos', payload, exclude_user=instance.user_id)
+        except Exception:
+            pass
 
 
 # ─── Family signals ────────────────────────────────────────────────────────────
@@ -142,18 +232,126 @@ def on_sos_saved(sender, instance, created, **kwargs):
 @receiver(post_save, sender='family.FamilyMembership')
 def on_membership_saved(sender, instance, created, **kwargs):
     if created:
-        # Notify every member of the group about the new member
+        try:
+            from family.models import FamilyMembership
+            member_ids = FamilyMembership.objects.filter(
+                family_group=instance.family_group
+            ).values_list('user_id', flat=True)
+
+            payload = {
+                'group_id': instance.family_group_id,
+                'group_name': instance.family_group.name if instance.family_group else '',
+                'new_member_id': instance.user_id,
+                'new_member_username': instance.user.username if instance.user else None,
+                'label': instance.label,
+                'action': 'joined',
+            }
+            for uid in member_ids:
+                _push(uid, 'family.update', 'members', payload)
+        except Exception as e:
+            logger.warning(f'[sync] family membership signal failed: {e}')
+
+
+# ─── Notifications signals ─────────────────────────────────────────────────────
+
+@receiver(post_save, sender='notifications.Notification')
+def on_notification_saved(sender, instance, created, **kwargs):
+    if created:
+        _push(instance.user_id, 'notification.new', 'push', {
+            'id': instance.id,
+            'type': instance.type,
+            'title': instance.title,
+            'message': instance.message,
+            'priority': instance.priority,
+            'data': instance.data,
+            'created_at': instance.created_at.isoformat(),
+        })
+
+
+@receiver(post_save, sender='notifications.Reminder')
+def on_reminder_saved(sender, instance, created, **kwargs):
+    action = 'created' if created else 'updated'
+    _push(instance.user_id, 'reminder.update', 'medicine', {
+        'id': instance.id,
+        'action': action,
+        'reminder_type': instance.reminder_type,
+        'title': instance.title,
+        'message': instance.message,
+        'time': str(instance.time),
+        'repeat_days': instance.repeat_days,
+        'is_active': instance.is_active,
+    })
+
+
+# ─── Location signals ──────────────────────────────────────────────────────────
+
+@receiver(post_save, sender='users.LocationHistory')
+def on_location_saved(sender, instance, created, **kwargs):
+    if not created:
+        return
+    payload = {
+        'user_id': instance.user_id,
+        'username': instance.user.username if instance.user else None,
+        'latitude': instance.latitude,
+        'longitude': instance.longitude,
+        'timestamp': instance.timestamp.isoformat(),
+    }
+    # Push to self
+    _push(instance.user_id, 'location.update', 'gps', payload)
+    # Push to all family members in same groups
+    try:
         from family.models import FamilyMembership
-        member_ids = FamilyMembership.objects.filter(
-            family_group=instance.family_group
+        family_ids = FamilyMembership.objects.filter(
+            user_id=instance.user_id, is_approved=True
+        ).values_list('family_group_id', flat=True)
+        for fid in family_ids:
+            _push_to_family_group_id(fid, 'location.update', 'gps', payload, exclude_user=instance.user_id)
+    except Exception as e:
+        logger.warning(f'[sync] location family push failed: {e}')
+
+
+# ─── Chat Message signals ──────────────────────────────────────────────────────
+
+@receiver(post_save, sender='chat.Message')
+def on_chat_message_saved(sender, instance, created, **kwargs):
+    """
+    Supplement the existing ChatConsumer broadcast:
+    ensures any Message written directly via REST (mobile app) is
+    also pushed through the personal sync channel.
+    """
+    if not created:
+        return
+    try:
+        # Find all participants
+        from chat.models import UserConversation
+        participant_ids = UserConversation.objects.filter(
+            conversation=instance.conversation
         ).values_list('user_id', flat=True)
 
         payload = {
-            'group_id': instance.family_group_id,
-            'group_name': instance.family_group.name,
-            'new_member_id': instance.user_id,
-            'new_member_username': instance.user.username if instance.user else None,
-            'label': instance.label,
+            'id': instance.id,
+            'conversation_id': instance.conversation_id,
+            'sender_id': instance.sender_id,
+            'sender_username': instance.sender.username if instance.sender else None,
+            'content': instance.content,
+            'message_type': instance.message_type,
+            'media_url': instance.media_url,
+            'timestamp': instance.timestamp.isoformat(),
+            'status': instance.status,
         }
-        for uid in member_ids:
-            _push(uid, 'family.update', 'members', payload)
+        for uid in participant_ids:
+            _push(uid, 'chat.message', 'new', payload)
+    except Exception as e:
+        logger.warning(f'[sync] chat message signal failed: {e}')
+
+
+@receiver(post_save, sender='sync.AIAssistantHistory')
+def on_ai_history_saved(sender, instance, created, **kwargs):
+    """Pushes new AI Assistant chat turns to all connected user devices."""
+    if created:
+        _push(instance.user_id, 'ai.history_update', 'history', {
+            'id': instance.id,
+            'role': instance.role,
+            'content': instance.content,
+            'created_at': instance.created_at.isoformat(),
+        })

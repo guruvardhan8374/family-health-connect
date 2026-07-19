@@ -1,47 +1,138 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService {
-  static const String _tokenKey = 'access_token';
-  static const String _usernameKey = 'username';
-  static const String _userIdKey = 'user_id';
+  static const String _tokenKey       = 'access_token';
+  static const String _refreshKey     = 'refresh_token';
+  static const String _usernameKey    = 'username';
+  static const String _userIdKey      = 'user_id';
+  static const String _emailKey       = 'email';
+  static const String _roleKey        = 'role';
+  static const String _profilePicKey  = 'profile_picture';
+  static const String _phoneKey       = 'phone_number';
+  static const String _bioKey         = 'bio';
   static const String _authProviderKey = 'auth_provider';
 
-  static Future<bool> isLoggedIn() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString(_tokenKey);
-    return token != null && token.isNotEmpty;
+  // ── Singleton SharedPreferences instance — loaded once, never again ──────
+  static SharedPreferences? _prefs;
+
+  static Future<SharedPreferences> _getPrefs() async {
+    _prefs ??= await SharedPreferences.getInstance();
+    return _prefs!;
   }
 
+  // ── In-memory cache for the most-accessed fields (zero I/O on hot path) ──
+  static String? _cachedToken;
+  static String? _cachedUsername;
+  static String? _cachedUserId;
+  static String? _cachedEmail;
+  static String? _cachedRole;
+
+  static Future<bool> isLoggedIn() async {
+    if (_cachedToken != null) return _cachedToken!.isNotEmpty;
+    final prefs = await _getPrefs();
+    _cachedToken = prefs.getString(_tokenKey);
+    return _cachedToken != null && _cachedToken!.isNotEmpty;
+  }
+
+  /// Save JWT token + basic identity fields in one prefs instance.
   static Future<void> saveToken({
     required String token,
     required String username,
     required String userId,
     String authProvider = 'django',
+    String? refreshToken,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, token);
-    await prefs.setString(_usernameKey, username);
-    await prefs.setString(_userIdKey, userId);
-    await prefs.setString(_authProviderKey, authProvider);
+    // Update in-memory cache immediately (instant reads after this)
+    _cachedToken    = token;
+    _cachedUsername = username;
+    _cachedUserId   = userId;
+
+    final prefs = await _getPrefs();
+    await Future.wait([
+      prefs.setString(_tokenKey,       token),
+      prefs.setString(_usernameKey,    username),
+      prefs.setString(_userIdKey,      userId),
+      prefs.setString(_authProviderKey, authProvider),
+      if (refreshToken != null) prefs.setString(_refreshKey, refreshToken),
+    ]);
+  }
+
+  /// Save full profile from the login token response — no extra API call needed.
+  static Future<void> saveProfile({
+    required String email,
+    required String role,
+    String profilePicture = '',
+    String phoneNumber    = '',
+    String bio            = '',
+  }) async {
+    _cachedEmail = email;
+    _cachedRole  = role;
+
+    final prefs = await _getPrefs();
+    await Future.wait([
+      prefs.setString(_emailKey,      email),
+      prefs.setString(_roleKey,       role),
+      prefs.setString(_profilePicKey, profilePicture),
+      prefs.setString(_phoneKey,      phoneNumber),
+      prefs.setString(_bioKey,        bio),
+    ]);
   }
 
   static Future<String?> getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey);
+    if (_cachedToken != null) return _cachedToken;
+    final prefs = await _getPrefs();
+    _cachedToken = prefs.getString(_tokenKey);
+    return _cachedToken;
   }
 
   static Future<String> getUsername() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_usernameKey) ?? 'User';
+    if (_cachedUsername != null) return _cachedUsername!;
+    final prefs = await _getPrefs();
+    _cachedUsername = prefs.getString(_usernameKey) ?? 'User';
+    return _cachedUsername!;
+  }
+
+  static Future<String> getUserId() async {
+    if (_cachedUserId != null) return _cachedUserId!;
+    final prefs = await _getPrefs();
+    _cachedUserId = prefs.getString(_userIdKey) ?? '';
+    return _cachedUserId!;
+  }
+
+  static Future<String> getEmail() async {
+    if (_cachedEmail != null) return _cachedEmail!;
+    final prefs = await _getPrefs();
+    _cachedEmail = prefs.getString(_emailKey) ?? '';
+    return _cachedEmail!;
+  }
+
+  static Future<String> getRole() async {
+    if (_cachedRole != null) return _cachedRole!;
+    final prefs = await _getPrefs();
+    _cachedRole = prefs.getString(_roleKey) ?? 'MEMBER';
+    return _cachedRole!;
+  }
+
+  static Future<String> getProfilePicture() async {
+    final prefs = await _getPrefs();
+    return prefs.getString(_profilePicKey) ?? '';
   }
 
   static Future<String?> getAuthProvider() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     return prefs.getString(_authProviderKey);
   }
 
   static Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
+    // Clear in-memory cache
+    _cachedToken    = null;
+    _cachedUsername = null;
+    _cachedUserId   = null;
+    _cachedEmail    = null;
+    _cachedRole     = null;
+
+    final prefs = await _getPrefs();
     await prefs.clear();
   }
 }
+

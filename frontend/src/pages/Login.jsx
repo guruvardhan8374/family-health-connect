@@ -13,11 +13,32 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [resendMsg, setResendMsg] = useState('');
+  const [resending, setResending] = useState(false);
   const [serverStatus, setServerStatus] = useState('checking'); // 'checking' | 'online' | 'waking'
   const [sessionBanner, setSessionBanner] = useState(''); // 'session_expired' | ''
 
   const navigate = useNavigate();
   const { login } = useAuth();
+
+  const handleResendOTP = async () => {
+    const targetEmail = unverifiedEmail || email.trim();
+    if (!targetEmail) return;
+    setResending(true);
+    setResendMsg('');
+    try {
+      await api.post('/users/resend-otp/', { email: targetEmail });
+      setResendMsg(`Verification email sent to ${targetEmail}!`);
+      setTimeout(() => {
+        navigate(`/verify-otp?email=${encodeURIComponent(targetEmail)}`);
+      }, 1500);
+    } catch (err) {
+      setResendMsg(err.response?.data?.error || 'Failed to resend verification email.');
+    } finally {
+      setResending(false);
+    }
+  };
 
   // ── Read session redirect reason (set by api.js interceptor) ────────────
   useEffect(() => {
@@ -115,11 +136,17 @@ export default function Login() {
     } catch (err) {
       if (!err.response) {
         setError('Server is unreachable. Please wait a moment and try again — the server may be waking up.');
-      } else if (err.response.status === 401) {
-        setError('Incorrect username/email or password. Please check and try again.');
-      } else if (err.response.status === 400) {
+      } else if (err.response.status === 400 || err.response.status === 401) {
         const data = err.response.data;
-        if (data?.non_field_errors?.length) {
+        if (data?.email_unverified || data?.detail?.includes?.('verify your email')) {
+          const unverified = data.email || email.trim();
+          setUnverifiedEmail(unverified);
+          setError('Please verify your email before logging in.');
+          return;
+        }
+        if (err.response.status === 401) {
+          setError('Incorrect username/email or password. Please check and try again.');
+        } else if (data?.non_field_errors?.length) {
           setError(data.non_field_errors[0]);
         } else if (data?.detail) {
           setError(data.detail);
@@ -183,9 +210,30 @@ export default function Login() {
             </div>
           )}
           {error && (
-            <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-xl text-red-200 text-sm flex items-start space-x-2">
-              <WifiOff className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{error}</span>
+            <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-xl text-red-200 text-sm space-y-3">
+              <div className="flex items-start space-x-2">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
+                <span>{error}</span>
+              </div>
+              {(unverifiedEmail || error.includes('verify your email')) && (
+                <div className="pt-2 border-t border-red-500/30 flex items-center justify-between">
+                  <span className="text-xs text-red-300">Need a new verification code?</span>
+                  <button
+                    type="button"
+                    onClick={handleResendOTP}
+                    disabled={resending}
+                    className="text-xs bg-red-500/30 hover:bg-red-500/50 text-white font-bold py-1.5 px-3 rounded-lg border border-red-400/40 transition-all disabled:opacity-50"
+                  >
+                    {resending ? 'Sending...' : 'Resend Verification Email'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {resendMsg && (
+            <div className="mb-6 p-4 bg-emerald-500/20 border border-emerald-500/50 rounded-xl text-emerald-200 text-sm flex items-start space-x-2">
+              <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-400" />
+              <span>{resendMsg}</span>
             </div>
           )}
 

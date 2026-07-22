@@ -45,9 +45,13 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user.check_password(password):
             raise serializers.ValidationError('Invalid password.')
 
-        # ── Only write to DB if the flag actually needs changing (skips save 99%) ─
+        # ── Email Verification Check ──────────
         if hasattr(user, 'is_otp_verified') and not user.is_otp_verified:
-            User.objects.filter(pk=user.pk).update(is_otp_verified=True)
+            raise serializers.ValidationError({
+                'detail': 'Please verify your email before logging in.',
+                'email_unverified': True,
+                'email': user.email
+            })
 
         # ── Set self.user directly so parent generate tokens without another lookup
         attrs['username'] = user.username

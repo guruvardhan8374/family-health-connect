@@ -135,6 +135,34 @@ class ApiService {
   }
 
 
+  static Future<Map<String, dynamic>?> googleLogin(String email, String username, String idToken) async {
+    try {
+      final response = await _client.post(
+        Uri.parse('$baseUrl/users/google-login/'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Bypass-Tunnel-Reminder': 'true'
+        },
+        body: jsonEncode({
+          'email': email,
+          'username': username,
+          'id_token': idToken,
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return {
+          'success': true,
+          'data': data,
+        };
+      }
+      return {'success': false, 'error': 'google_login_failed'};
+    } catch (_) {
+      return {'success': false, 'error': 'network_error'};
+    }
+  }
+
   static Future<Map<String, dynamic>?> login(String username, String password) async {
     try {
       final response = await _client.post(

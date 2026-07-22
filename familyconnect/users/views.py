@@ -29,32 +29,25 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         
-        # Auto-verify user so they can log in immediately
-        # (OTP email is still generated for future use when SMTP is configured)
-        user.is_otp_verified = True
+        # Require OTP email verification before logging in
+        user.is_otp_verified = False
         otp_code = generate_otp()
         user.otp_code = otp_code
         user.otp_created_at = timezone.now()
         user.save()
         
-        # Send OTP email (logs to console — will be real email when SMTP is configured)
+        # Send OTP email
         send_otp_email(user.email, otp_code)
         
         # Initialize default user settings
         UserSettings.objects.create(user=user)
         
-        # Generate JWT tokens for immediate login
-        from rest_framework_simplejwt.tokens import RefreshToken
-        refresh = RefreshToken.for_user(user)
-        
         headers = self.get_success_headers(serializer.data)
         return Response({
-            "message": "User registered successfully! You can now log in.",
+            "message": "User registered successfully! Please verify your email before logging in.",
             "user": UserSerializer(user).data,
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-            "user_id": user.id,
-            "username": user.username
+            "email": user.email,
+            "email_unverified": True
         }, status=status.HTTP_201_CREATED, headers=headers)
 
 class SecureTokenObtainPairView(TokenObtainPairView):
@@ -71,18 +64,23 @@ class GoogleAuthView(APIView):
             return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Get or create CustomUser by email
-        user, created = CustomUser.objects.get_or_create(
-            email=email,
-            defaults={
-                'username': username or email.split('@')[0],
-                'role': 'MEMBER',
-                'is_otp_verified': True,
-            }
-        )
-        if created:
+        user = CustomUser.objects.filter(email=email).first()
+        if not user:
+            clean_username = (username or email.split('@')[0]).replace(' ', '_')
+            if CustomUser.objects.filter(username=clean_username).exists():
+                clean_username = f"{clean_username}_{uuid.uuid4().hex[:4]}"
+            user = CustomUser.objects.create_user(
+                username=clean_username,
+                email=email,
+                role='MEMBER',
+                is_otp_verified=True,
+            )
             user.set_unusable_password()
             user.save()
-            UserSettings.objects.get_or_create(user=user)
+            try:
+                UserSettings.objects.get_or_create(user=user)
+            except Exception:
+                pass
 
         # Issue Django SimpleJWT tokens
         refresh = RefreshToken.for_user(user)
@@ -115,6 +113,26 @@ class VerifyOTPView(APIView):
             return Response({"error": "Invalid or expired OTP"}, status=status.HTTP_400_BAD_REQUEST)
         except CustomUser.DoesNotExist:
             return Response({"error": "User with this email does not exist"}, status=status.HTTP_400_BAD_REQUEST)
+
+class ResendOTPView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = CustomUser.objects.get(email=email)
+            if user.is_otp_verified:
+                return Response({"message": "Email is already verified. You can log in."}, status=status.HTTP_200_OK)
+            otp_code = generate_otp()
+            user.otp_code = otp_code
+            user.otp_created_at = timezone.now()
+            user.save()
+            send_otp_email(user.email, otp_code)
+            return Response({"message": f"Verification email sent to {email}."}, status=status.HTTP_200_OK)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User with this email does not exist."}, status=status.HTTP_404_NOT_FOUND)
 
 class PasswordResetRequestView(APIView):
     permission_classes = (permissions.AllowAny,)

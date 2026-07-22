@@ -56,33 +56,22 @@ export default function Register() {
       setError('Passwords do not match.');
       return;
     }
-    if (passScore < 3) {
-      setError('Password is too weak. Please make it stronger.');
+    if (passScore < 5) {
+      setError('Password must contain at least 8 characters, an uppercase letter, a lowercase letter, a number, and a special character.');
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const res = await api.post('/users/register/', {
+      await api.post('/users/register/', {
         username:         formData.username.trim(),
         email:            formData.email.trim(),
         password:         formData.password,
         password_confirm: formData.password,
         role:             formData.role,
       });
-      const data = res.data;
-      if (data.access && data.refresh) {
-        login({
-          access:   data.access,
-          refresh:  data.refresh,
-          username: data.username || formData.username,
-          user_id:  data.user_id?.toString() || '',
-          role:     data.role || formData.role,
-        });
-        navigate('/');
-      } else {
-        navigate('/verify-otp', { state: { email: formData.email } });
-      }
+      // Always redirect to OTP verification so email is verified before login
+      navigate(`/verify-otp?email=${encodeURIComponent(formData.email.trim())}`);
     } catch (err) {
       if (!err.response) {
         setError('Server is unreachable. It may be waking up — please wait 30 seconds and try again.');

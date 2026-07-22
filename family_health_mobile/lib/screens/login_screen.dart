@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
 import '../services/sync_service.dart';
@@ -78,7 +79,9 @@ class _LoginScreenState extends State<LoginScreen> {
     } else {
       final errorType = result?['error'] ?? 'network_error';
       setState(() {
-        if (errorType == 'timeout' || errorType == 'network_error') {
+        if (errorType.contains('verify your email') || errorType.contains('email_unverified')) {
+          _error = 'Please verify your email before logging in.';
+        } else if (errorType == 'timeout' || errorType == 'network_error') {
           _error = 'Connection timed out. Please check your internet and try again.';
         } else if (errorType != 'unauthorized') {
           _error = errorType;
@@ -233,6 +236,53 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Future<void> _handleGoogleSignIn() async {
+    setState(() { _isLoading = true; _error = null; });
+    try {
+      final GoogleSignIn googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+      final GoogleSignInAccount? account = await googleSignIn.signIn();
+      if (account == null) {
+        setState(() => _isLoading = false);
+        return; // User canceled
+      }
+      final GoogleSignInAuthentication auth = await account.authentication;
+      final idToken = auth.idToken ?? auth.accessToken ?? '';
+
+      final result = await ApiService.googleLogin(account.email, account.displayName ?? '', idToken);
+      if (result != null && result['success'] == true) {
+        final data = result['data'] as Map<String, dynamic>;
+        await Future.wait([
+          AuthService.saveToken(
+            token: data['access'] ?? '',
+            username: data['username'] ?? account.email.split('@')[0],
+            userId: data['user_id']?.toString() ?? '',
+            refreshToken: data['refresh'],
+          ),
+          AuthService.saveProfile(
+            email: data['email'] ?? account.email,
+            role: data['role'] ?? 'MEMBER',
+            profilePicture: data['profile_picture'] ?? '',
+            phoneNumber: data['phone_number'] ?? '',
+            bio: data['bio'] ?? '',
+          ),
+        ]);
+        if (!mounted) return;
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainShell()));
+        SyncService.instance.connect();
+      } else {
+        setState(() {
+          _error = 'Google Sign-In authentication failed.';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = 'Google Sign-In failed. Please try email login.';
+        _isLoading = false;
+      });
+    }
+  }
+
   // ── Google button ───────────────────────────────────────────────────────────
   Widget _buildGoogleButton() {
     return Container(
@@ -243,13 +293,7 @@ class _LoginScreenState extends State<LoginScreen> {
         borderRadius: BorderRadius.circular(14),
       ),
       child: ElevatedButton(
-        onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content:
-                    Text('Google Sign-In will be available soon!')),
-          );
-        },
+        onPressed: _isLoading ? null : _handleGoogleSignIn,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,

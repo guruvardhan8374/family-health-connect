@@ -47,6 +47,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    final passErrors = <String>[];
+    if (password.length < 8) passErrors.add('8+ characters');
+    if (!RegExp(r'[A-Z]').hasMatch(password)) passErrors.add('1 uppercase letter');
+    if (!RegExp(r'[a-z]').hasMatch(password)) passErrors.add('1 lowercase letter');
+    if (!RegExp(r'[0-9]').hasMatch(password)) passErrors.add('1 number');
+    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password)) passErrors.add('1 special character');
+
+    if (passErrors.isNotEmpty) {
+      setState(() {
+        _error = 'Password must contain: ${passErrors.join(', ')}.';
+        _fieldErrors = {};
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = null;

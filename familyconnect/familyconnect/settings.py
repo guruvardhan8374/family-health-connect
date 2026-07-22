@@ -239,6 +239,7 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='') or os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='') or os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER or 'noreply@familyhealthconnect.com'
+RESEND_API_KEY = config('RESEND_API_KEY', default='') or os.environ.get('RESEND_API_KEY', '')
 
 # ─── External API Keys ───────────────────────────────────────
 GEMINI_API_KEY = config('GEMINI_API_KEY', default='')

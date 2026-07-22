@@ -157,6 +157,33 @@ def send_otp_email(email, otp_code):
     </html>
     """
 
+    resend_key = getattr(settings, 'RESEND_API_KEY', '') or os.environ.get('RESEND_API_KEY', '')
+    if resend_key:
+        try:
+            import json, urllib.request
+            req = urllib.request.Request(
+                'https://api.resend.com/emails',
+                data=json.dumps({
+                    "from": "Family Health Connect <onboarding@resend.dev>",
+                    "to": [email],
+                    "subject": subject,
+                    "html": html_content,
+                    "text": text_content,
+                }).encode('utf-8'),
+                headers={
+                    'Authorization': f'Bearer {resend_key}',
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'FamilyHealthConnect/1.0',
+                },
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                if resp.status in (200, 201):
+                    logger.info(f"OTP email sent via Resend HTTPS API to {email}")
+                    return True
+        except Exception as err:
+            logger.error(f"Resend HTTPS API failed: {err}")
+
     host_user = getattr(settings, 'EMAIL_HOST_USER', '')
     host_pass = getattr(settings, 'EMAIL_HOST_PASSWORD', '')
     is_configured = bool(host_user and host_pass and 'your_' not in host_user and 'your_' not in host_pass)

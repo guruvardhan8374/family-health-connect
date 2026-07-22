@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 
@@ -12,14 +13,37 @@ class OtpVerificationScreen extends StatefulWidget {
 class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   final _otpController = TextEditingController();
   bool _isLoading = false;
+  bool _isResending = false;
   String? _error;
   String? _successMessage;
 
+  int _resendCooldown = 60;
+  Timer? _cooldownTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startCooldownTimer();
+  }
+
+  void _startCooldownTimer() {
+    setState(() => _resendCooldown = 60);
+    _cooldownTimer?.cancel();
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_resendCooldown > 1) {
+        setState(() => _resendCooldown--);
+      } else {
+        setState(() => _resendCooldown = 0);
+        timer.cancel();
+      }
+    });
+  }
+
   Future<void> _verifyOtp() async {
     final otp = _otpController.text.trim();
-    if (otp.isEmpty) {
+    if (otp.isEmpty || otp.length < 6) {
       setState(() {
-        _error = 'Please enter the verification code.';
+        _error = 'Please enter all 6 digits of your verification code.';
       });
       return;
     }
@@ -30,24 +54,51 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       _successMessage = null;
     });
 
-    final success = await ApiService.verifyOtp(widget.email, otp);
+    final res = await ApiService.verifyOtp(widget.email, otp);
 
     setState(() => _isLoading = false);
 
-    if (success) {
+    if (res['success'] == true) {
       setState(() {
-        _successMessage = '✅ OTP Verified Successfully! You can now log in.';
+        _successMessage = '✅ ' + (res['message'] as String? ?? 'OTP Verified Successfully!');
       });
       if (mounted) {
         Future.delayed(const Duration(seconds: 2), () {
           if (mounted) {
-            Navigator.pop(context); // Go back to login screen
+            Navigator.pop(context, true); // Go back to login screen with verified status
           }
         });
       }
     } else {
       setState(() {
-        _error = 'Invalid or expired OTP code. Please try again.';
+        _error = res['message'] as String? ?? 'Invalid or expired OTP code. Please try again.';
+        _otpController.clear();
+      });
+    }
+  }
+
+  Future<void> _handleResendOtp() async {
+    if (_resendCooldown > 0 || _isResending) return;
+
+    setState(() {
+      _isResending = true;
+      _error = null;
+      _successMessage = null;
+    });
+
+    final res = await ApiService.resendOtp(widget.email);
+
+    setState(() => _isResending = false);
+
+    if (res['success'] == true) {
+      setState(() {
+        _successMessage = 'A new 6-digit code has been sent to ${widget.email}.';
+        _otpController.clear();
+      });
+      _startCooldownTimer();
+    } else {
+      setState(() {
+        _error = res['message'] as String? ?? 'Failed to resend OTP. Please try again.';
       });
     }
   }
@@ -74,7 +125,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             padding: const EdgeInsets.all(24),
             child: Column(
               children: [
-                const SizedBox(height: 40),
+                const SizedBox(height: 30),
                 // Icon
                 Container(
                   width: 72,
@@ -106,7 +157,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   widget.email,
                   style: const TextStyle(color: Color(0xFF14B8A6), fontSize: 16, fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 36),
+                const SizedBox(height: 32),
 
                 // Card
                 Container(
@@ -161,12 +212,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                           controller: _otpController,
                           keyboardType: TextInputType.number,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 8),
+                          style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold, letterSpacing: 10),
                           maxLength: 6,
+                          autofocus: true,
                           decoration: InputDecoration(
                             counterText: '',
                             hintText: '000000',
-                            hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2), fontSize: 24, letterSpacing: 8),
+                            hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2), fontSize: 26, letterSpacing: 10),
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                           ),
@@ -204,17 +256,28 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 28),
+
+                // Resend Button with Cooldown
                 TextButton(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('A new OTP has been requested.')),
-                    );
-                  },
-                  child: Text(
-                    'Didn\'t receive code? Resend OTP',
-                    style: TextStyle(color: const Color(0xFF14B8A6).withValues(alpha: 0.8)),
-                  ),
+                  onPressed: (_resendCooldown > 0 || _isResending) ? null : _handleResendOtp,
+                  child: _isResending
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(color: Color(0xFF14B8A6), strokeWidth: 2),
+                        )
+                      : Text(
+                          _resendCooldown > 0
+                              ? 'Didn\'t receive code? Resend in ${_resendCooldown}s'
+                              : 'Didn\'t receive code? Resend OTP',
+                          style: TextStyle(
+                            color: _resendCooldown > 0
+                                ? Colors.white.withValues(alpha: 0.4)
+                                : const Color(0xFF14B8A6),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                 ),
               ],
             ),
@@ -226,6 +289,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   @override
   void dispose() {
+    _cooldownTimer?.cancel();
     _otpController.dispose();
     super.dispose();
   }

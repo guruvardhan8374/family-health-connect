@@ -11,8 +11,9 @@ class CustomUser(AbstractUser):
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     profile_picture = models.URLField(blank=True, null=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='MEMBER')
-    otp_code = models.CharField(max_length=6, blank=True, null=True)
+    otp_code = models.CharField(max_length=128, blank=True, null=True)
     otp_created_at = models.DateTimeField(blank=True, null=True)
+    otp_failed_attempts = models.IntegerField(default=0)
     is_otp_verified = models.BooleanField(default=False)
     
     # New profile fields

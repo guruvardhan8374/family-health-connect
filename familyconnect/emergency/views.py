@@ -1,4 +1,5 @@
 from rest_framework import viewsets, permissions, status
+from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
@@ -7,8 +8,9 @@ from django.db.models import Q
 from .models import EmergencyContact, SOSAlert, NearbyHospital
 from .serializers import EmergencyContactSerializer, SOSAlertSerializer, NearbyHospitalSerializer
 from .permissions import CanManageEmergencyContacts
-from .services import get_vitals_snapshot, notify_family_members
+from .services import get_vitals_snapshot, notify_family_members, get_nearby_police_stations
 from family.models import FamilyMembership
+
 
 class EmergencyContactViewSet(viewsets.ModelViewSet):
     serializer_class = EmergencyContactSerializer
@@ -123,7 +125,6 @@ class SOSAlertViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='active')
     def active_alerts(self, request):
-        # Retrieve all currently active SOS alerts within user's family circles
         user_family_groups = FamilyMembership.objects.filter(user=request.user, is_approved=True).values_list('family_group_id', flat=True)
         family_member_ids = FamilyMembership.objects.filter(family_group_id__in=user_family_groups, is_approved=True).values_list('user_id', flat=True)
         
@@ -139,3 +140,20 @@ class NearbyHospitalViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = NearbyHospital.objects.all().order_by('distance_km')
     serializer_class = NearbyHospitalSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+class NearbyPoliceView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        try:
+            lat = float(request.query_params.get('lat', 12.9716))
+            lng = float(request.query_params.get('lng', 77.5946))
+        except (TypeError, ValueError):
+            lat, lng = 12.9716, 77.5946
+
+        stations = get_nearby_police_stations(lat, lng)
+        return Response({
+            "count": len(stations),
+            "user_location": {"latitude": lat, "longitude": lng},
+            "police_stations": stations
+        }, status=status.HTTP_200_OK)

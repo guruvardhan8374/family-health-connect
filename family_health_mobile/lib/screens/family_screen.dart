@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../services/sync_service.dart';
+import 'chat_screen.dart';
 
 class FamilyScreen extends StatefulWidget {
   const FamilyScreen({super.key});
@@ -112,33 +113,13 @@ class _FamilyScreenState extends State<FamilyScreen> {
     );
   }
 
-  void _showAddMemberDialog({String initialMode = ''}) async {
-    // Show a loading indicator first or fetch immediately
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator(color: Color(0xFF14B8A6))),
-    );
-
-    final groups = await ApiService.getFamilyGroups();
-    
-    if (mounted) {
-      Navigator.pop(context); // Dismiss loading spinner
-    } else {
-      return;
-    }
-
-    final emailController = TextEditingController();
+  void _showAddMemberDialog({String initialMode = 'create'}) async {
     final codeController = TextEditingController();
     final nameController = TextEditingController();
     final descController = TextEditingController();
     String label = 'OTHER';
-    String mode = initialMode.isNotEmpty 
-        ? initialMode 
-        : (groups.isEmpty ? 'create' : 'invite');
+    String mode = (initialMode == 'join' || initialMode == 'create') ? initialMode : 'create';
     bool dialogSaving = false;
-
-    if (!mounted) return;
 
     showDialog(
       context: context,
@@ -149,9 +130,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
           return AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             title: Text(
-              mode == 'invite' 
-                  ? 'Invite Family Member' 
-                  : (mode == 'join' ? 'Join Family Group' : 'Create Family Circle'),
+              mode == 'join' ? 'Join Family Group' : 'Create Family Circle',
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             content: SingleChildScrollView(
@@ -163,35 +142,9 @@ class _FamilyScreenState extends State<FamilyScreen> {
                     children: [
                       Expanded(
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                          padding: const EdgeInsets.symmetric(horizontal: 4.0),
                           child: ChoiceChip(
-                            label: const Text('Invite', style: TextStyle(fontSize: 12)),
-                            selected: mode == 'invite',
-                            selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
-                            onSelected: (val) {
-                              if (val) setStateDialog(() => mode = 'invite');
-                            },
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                          child: ChoiceChip(
-                            label: const Text('Join', style: TextStyle(fontSize: 12)),
-                            selected: mode == 'join',
-                            selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
-                            onSelected: (val) {
-                              if (val) setStateDialog(() => mode = 'join');
-                            },
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                          child: ChoiceChip(
-                            label: const Text('Create', style: TextStyle(fontSize: 12)),
+                            label: const Text('Create Circle', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                             selected: mode == 'create',
                             selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
                             onSelected: (val) {
@@ -200,46 +153,23 @@ class _FamilyScreenState extends State<FamilyScreen> {
                           ),
                         ),
                       ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                          child: ChoiceChip(
+                            label: const Text('Join Circle', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            selected: mode == 'join',
+                            selectedColor: const Color(0xFF14B8A6).withValues(alpha: 0.2),
+                            onSelected: (val) {
+                              if (val) setStateDialog(() => mode = 'join');
+                            },
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
-                  if (mode == 'invite') ...[
-                    if (groups.isEmpty)
-                      const Text(
-                        'You do not manage any family groups. Please create a family group first using the Create tab above.',
-                        style: TextStyle(color: Colors.red, fontSize: 13),
-                        textAlign: TextAlign.center,
-                      )
-                    else ...[
-                      TextField(
-                        controller: emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        style: TextStyle(color: dialogDark ? Colors.white : const Color(0xFF0F172A)),
-                        decoration: InputDecoration(
-                          labelText: 'Invitee Email',
-                          prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFF14B8A6)),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: label,
-                        decoration: InputDecoration(
-                          labelText: 'Relationship Label',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        dropdownColor: dialogDark ? const Color(0xFF1E293B) : Colors.white,
-                        items: const [
-                          DropdownMenuItem(value: 'PARENT', child: Text('Parent')),
-                          DropdownMenuItem(value: 'CHILD', child: Text('Child')),
-                          DropdownMenuItem(value: 'ELDER', child: Text('Elderly Member')),
-                          DropdownMenuItem(value: 'SPOUSE', child: Text('Spouse')),
-                          DropdownMenuItem(value: 'OTHER', child: Text('Other')),
-                        ],
-                        onChanged: (val) => setStateDialog(() => label = val!),
-                      ),
-                    ]
-                  ] else if (mode == 'join') ...[
+                  if (mode == 'join') ...[
                     TextField(
                       controller: codeController,
                       style: TextStyle(color: dialogDark ? Colors.white : const Color(0xFF0F172A)),
@@ -295,108 +225,80 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('Cancel', style: TextStyle(color: Color(0xFF64748B))),
               ),
-              if (mode != 'invite' || groups.isNotEmpty)
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF14B8A6),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: dialogSaving
-                      ? null
-                      : () async {
-                          setStateDialog(() => dialogSaving = true);
-                          bool success = false;
-                          String msg = '';
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF14B8A6),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: dialogSaving
+                    ? null
+                    : () async {
+                        setStateDialog(() => dialogSaving = true);
+                        bool success = false;
+                        String msg = '';
 
-                          if (mode == 'invite') {
-                            final email = emailController.text.trim();
-                            if (email.isEmpty) {
-                              setStateDialog(() => dialogSaving = false);
-                              return;
-                            }
-                            if (groups.isEmpty) {
-                              setStateDialog(() => dialogSaving = false);
-                              if (ctx.mounted) {
-                                Navigator.pop(ctx);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('You must create a Family Circle first before inviting members.'),
-                                    backgroundColor: Colors.orange,
-                                  ),
-                                );
-                              }
-                              return;
-                            }
-                            final groupId = groups[0]['id'] as int;
-                            final res = await ApiService.inviteFamilyMember(groupId, email, label);
-                            success = res['success'] == true;
-                            msg = success
-                                ? (res['message'] ?? 'Invitation sent to $email!')
-                                : (res['error'] ?? 'Failed to send invitation.');
-                          } else if (mode == 'join') {
-                            final code = codeController.text.trim();
-                            if (code.isEmpty) {
-                              setStateDialog(() => dialogSaving = false);
-                              return;
-                            }
-                            final res = await ApiService.joinFamilyByCode(code, label);
-                            success = res['success'] == true;
-                            msg = success
-                                ? (res['message'] ?? 'Request to join group submitted!')
-                                : (res['error'] ?? 'Failed to join group.');
-                          } else {
-                            final name = nameController.text.trim();
-                            if (name.isEmpty) {
-                              setStateDialog(() => dialogSaving = false);
-                              return;
-                            }
-                            final desc = descController.text.trim();
-                            final res = await ApiService.createFamilyGroup(name, desc);
-                            success = res['success'] == true;
-                            if (success) {
-                              final code = res['family_code']?.toString() ?? '';
-                              msg = 'Family Circle "$name" created!';
-                              if (ctx.mounted) {
-                                Navigator.pop(ctx);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(msg), backgroundColor: Colors.green),
-                                );
-                                setState(() => _isLoading = true);
-                                _fetchMembers(forceRefresh: true);
-                                if (code.isNotEmpty) {
-                                  Future.delayed(const Duration(milliseconds: 300), () {
-                                    _showFamilyCodeDialog(code, name);
-                                  });
-                                }
-                              }
-                              return;
-                            }
-                            msg = res['error']?.toString() ?? 'Failed to create Family Circle.';
+                        if (mode == 'join') {
+                          final code = codeController.text.trim();
+                          if (code.isEmpty) {
+                            setStateDialog(() => dialogSaving = false);
+                            return;
                           }
-
-                          if (ctx.mounted) {
-                            Navigator.pop(ctx);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(msg),
-                                backgroundColor: success ? Colors.green : Colors.red,
-                              ),
-                            );
-                            if (success) {
+                          final res = await ApiService.joinFamilyByCode(code, label);
+                          success = res['success'] == true;
+                          msg = success
+                              ? (res['message'] ?? 'Request to join group submitted!')
+                              : (res['error'] ?? 'Failed to join group.');
+                        } else {
+                          final name = nameController.text.trim();
+                          if (name.isEmpty) {
+                            setStateDialog(() => dialogSaving = false);
+                            return;
+                          }
+                          final desc = descController.text.trim();
+                          final res = await ApiService.createFamilyGroup(name, desc);
+                          success = res['success'] == true;
+                          if (success) {
+                            final code = res['family_code']?.toString() ?? '';
+                            msg = 'Family Circle "$name" created!';
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(msg), backgroundColor: Colors.green),
+                              );
                               setState(() => _isLoading = true);
                               _fetchMembers(forceRefresh: true);
+                              if (code.isNotEmpty) {
+                                Future.delayed(const Duration(milliseconds: 300), () {
+                                  _showFamilyCodeDialog(code, name);
+                                });
+                              }
                             }
+                            return;
                           }
-                        },
-                  child: dialogSaving
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : Text(
-                          mode == 'invite' 
-                              ? 'Send Invite' 
-                              : (mode == 'join' ? 'Join Group' : 'Create Circle'), 
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                ),
+                          msg = res['error']?.toString() ?? 'Failed to create Family Circle.';
+                        }
+
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(msg),
+                              backgroundColor: success ? Colors.green : Colors.red,
+                            ),
+                          );
+                          if (success) {
+                            setState(() => _isLoading = true);
+                            _fetchMembers(forceRefresh: true);
+                          }
+                        }
+                      },
+                child: dialogSaving
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : Text(
+                        mode == 'join' ? 'Join Group' : 'Create Circle', 
+                        style: const TextStyle(color: Colors.white),
+                      ),
+              ),
             ],
           );
         },
@@ -678,34 +580,11 @@ class _FamilyScreenState extends State<FamilyScreen> {
                             ),
                             IconButton(
                               icon: const Icon(Icons.message_rounded, color: Color(0xFF6366F1), size: 22),
-                              onPressed: () async {
-                                if (phone.toString().isNotEmpty) {
-                                  final url = Uri.parse('sms:${phone.toString().replaceAll(' ', '')}');
-                                  if (await canLaunchUrl(url)) {
-                                    await launchUrl(url);
-                                  } else {
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Could not open SMS app.')),
-                                      );
-                                    }
-                                  }
-                                } else if (email.toString().isNotEmpty) {
-                                  final url = Uri.parse('mailto:${email.toString()}');
-                                  if (await canLaunchUrl(url)) {
-                                    await launchUrl(url);
-                                  } else {
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Could not open mail app.')),
-                                      );
-                                    }
-                                  }
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('No contact information registered for this member.')),
-                                  );
-                                }
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const ChatScreen()),
+                                );
                               },
                             ),
                           ],

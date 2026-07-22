@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 import 'sync_service.dart';
@@ -55,6 +56,7 @@ class ApiService {
   /// Call this on logout so the next login fetches a fresh token.
   static void clearTokenCache() {
     _cachedProfile = null;
+    // Token is managed by AuthService; no local cache to clear here
   }
 
   static Future<Map<String, String>> _getHeaders() async {
@@ -243,7 +245,6 @@ class ApiService {
 
   /// Clears all response caches (call on logout or mutation)
   static void clearAllCaches() {
-    _cachedToken = null;
     _cachedProfile = null;
     _cachedFamilyMembers = null;
     _cachedHealthData = null;
@@ -414,6 +415,24 @@ class ApiService {
     return res != null;
   }
 
+  static Future<List<Map<String, dynamic>>> getNearbyPolice({double? lat, double? lng}) async {
+    try {
+      final headers = await _getHeaders();
+      final uri = Uri.parse('$baseUrl/emergency/nearby-police/?lat=${lat ?? 12.9716}&lng=${lng ?? 77.5946}');
+      final res = await _client.get(uri, headers: headers).timeout(_kGetTimeout);
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final list = data['police_stations'] as List?;
+        if (list != null) {
+          return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+        }
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
   // --- SETTINGS API ---
   static Future<Map<String, dynamic>?> getProfileSettings() async {
     try {
@@ -430,6 +449,48 @@ class ApiService {
       final response = await _client.put(Uri.parse('$baseUrl/settings/profile/'), headers: headers, body: jsonEncode(data)).timeout(_kWriteTimeout);
       return response.statusCode == 200;
     } catch (e) { return false; }
+  }
+
+  static Future<Map<String, dynamic>?> uploadAvatar(File imageFile) async {
+    try {
+      final token = await _getToken();
+      final uri = Uri.parse('$baseUrl/users/avatar/');
+      final request = http.MultipartRequest('POST', uri);
+      
+      request.headers.addAll({
+        'Bypass-Tunnel-Reminder': 'true',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      });
+
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'avatar',
+          imageFile.path,
+        ),
+      );
+
+      final response = await request.send().timeout(const Duration(seconds: 30));
+      if (response.statusCode == 200) {
+        final responseBody = await response.stream.bytesToString();
+        return jsonDecode(responseBody) as Map<String, dynamic>;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Future<bool> deleteAvatar() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await _client.delete(
+        Uri.parse('$baseUrl/users/avatar/'),
+        headers: headers,
+      ).timeout(_kWriteTimeout);
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
   }
 
   static Future<Map<String, dynamic>?> getNotificationSettings() async {
@@ -696,15 +757,40 @@ class ApiService {
     } catch (e) { return null; }
   }
 
-  static Future<bool> verifyOtp(String email, String otp) async {
+  static Future<Map<String, dynamic>> verifyOtp(String email, String otp) async {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/users/verify-otp/'),
         headers: {'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true'},
         body: jsonEncode({'email': email, 'otp': otp}),
       ).timeout(_kWriteTimeout);
-      return response.statusCode == 200;
-    } catch (e) { return false; }
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, 'message': data['message'] ?? 'OTP verified successfully.'};
+      } else {
+        return {'success': false, 'message': data['error'] ?? data['detail'] ?? 'Invalid or expired OTP.'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Network error. Please try again.'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> resendOtp(String email) async {
+    try {
+      final response = await _client.post(
+        Uri.parse('$baseUrl/users/resend-otp/'),
+        headers: {'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true'},
+        body: jsonEncode({'email': email}),
+      ).timeout(_kWriteTimeout);
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, 'message': data['message'] ?? 'New verification code sent.'};
+      } else {
+        return {'success': false, 'message': data['error'] ?? data['detail'] ?? 'Failed to resend code.'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Network error. Please try again.'};
+    }
   }
 
   static Future<bool> createHealthRecord(Map<String, dynamic> data) async {

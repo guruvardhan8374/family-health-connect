@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/login_screen.dart';
@@ -244,11 +246,165 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
+  StreamSubscription? _sosSub;
 
   @override
   void initState() {
     super.initState();
     PedometerService.instance.init();
+    _listenForSOS();
+  }
+
+  void _listenForSOS() {
+    _sosSub = SyncService.instance.stream.listen((event) {
+      if (!mounted) return;
+      if (event['type'] == 'emergency.alert') {
+        final data = event['data'] as Map<String, dynamic>?;
+        if (data == null) return;
+
+        final isResolved = data['is_resolved'] == true ||
+            data['status'] == 'RESOLVED' ||
+            data['status'] == 'FALSE_ALARM';
+
+        if (!isResolved) {
+          _showGlobalSOSDialog(data);
+        }
+      }
+    });
+  }
+
+  void _showGlobalSOSDialog(Map<String, dynamic> data) {
+    if (!mounted) return;
+
+    // Trigger urgent haptic pattern
+    HapticFeedback.vibrate();
+    Future.delayed(const Duration(milliseconds: 400), () => HapticFeedback.vibrate());
+    Future.delayed(const Duration(milliseconds: 800), () => HapticFeedback.vibrate());
+
+    final triggeredBy = data['triggered_by'] ?? 'Family Member';
+    final message = data['message'] ?? 'Emergency! I need help immediately.';
+    final lat = data['location_lat'];
+    final lng = data['location_lng'];
+    final mapsLink = (lat != null && lng != null)
+        ? 'https://www.google.com/maps/search/?api=1&query=$lat,$lng'
+        : null;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        backgroundColor: Colors.transparent,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: const LinearGradient(
+              colors: [Color(0xFFDC2626), Color(0xFF991B1B)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFEF4444).withValues(alpha: 0.6),
+                blurRadius: 40,
+                spreadRadius: 5,
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.emergency_share_rounded, color: Colors.white, size: 32),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('🚨 SOS ALERT',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 3,
+                          )),
+                        Text(triggeredBy,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          )),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(color: Colors.white24, height: 28),
+              const Text('EMERGENCY MESSAGE',
+                style: TextStyle(color: Colors.white60, fontSize: 10, letterSpacing: 2)),
+              const SizedBox(height: 6),
+              Text(message,
+                style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
+              if (lat != null && lng != null) ...[
+                const SizedBox(height: 16),
+                const Text('LOCATION',
+                  style: TextStyle(color: Colors.white60, fontSize: 10, letterSpacing: 2)),
+                const SizedBox(height: 6),
+                Text('$lat, $lng',
+                  style: const TextStyle(color: Colors.white, fontSize: 13)),
+              ],
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  if (mapsLink != null)
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xFFDC2626),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        icon: const Icon(Icons.map_rounded, size: 18),
+                        label: const Text('Open Map', style: TextStyle(fontWeight: FontWeight.bold)),
+                        onPressed: () async {
+                          final url = Uri.parse(mapsLink);
+                          Navigator.pop(ctx);
+                          if (await canLaunchUrl(url)) {
+                            await launchUrl(url, mode: LaunchMode.externalApplication);
+                          }
+                        },
+                      ),
+                    ),
+                  if (mapsLink != null) const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white54),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Dismiss', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _sosSub?.cancel();
+    super.dispose();
   }
 
   final List<Widget> _screens = const [

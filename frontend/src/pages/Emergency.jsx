@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ShieldAlert, Phone, MapPin, AlertTriangle, Loader2, CheckCircle, Siren } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ShieldAlert, Phone, MapPin, AlertTriangle, Loader2, CheckCircle, Siren, Navigation, Building2 } from 'lucide-react';
 import api from '../utils/api';
 import { useSyncEvent } from '../contexts/SyncContext';
 
@@ -7,29 +7,72 @@ export default function Emergency() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [incomingAlerts, setIncomingAlerts] = useState([]);
+  const [policeStations, setPoliceStations] = useState([]);
+  const [fetchingPolice, setFetchingPolice] = useState(true);
+  const [locationSharing, setLocationSharing] = useState(true);
+
+  // Fetch nearby police stations dynamically based on location
+  const fetchNearbyPolice = (lat = 12.9716, lng = 77.5946) => {
+    setFetchingPolice(true);
+    api.get(`/emergency/nearby-police/?lat=${lat}&lng=${lng}`)
+      .then((res) => {
+        setPoliceStations(res.data.police_stations || []);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch nearby police stations:', err);
+      })
+      .finally(() => setFetchingPolice(false));
+  };
+
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          fetchNearbyPolice(pos.coords.latitude, pos.coords.longitude);
+        },
+        () => {
+          fetchNearbyPolice(); // fallback
+        },
+        { timeout: 5000 }
+      );
+    } else {
+      fetchNearbyPolice();
+    }
+  }, []);
 
   const handleSOS = async () => {
     setLoading(true);
     setSuccess(false);
     
-    try {
-      // Get current location
-      navigator.geolocation.getCurrentPosition(async (pos) => {
-        const { latitude, longitude } = pos.coords;
-        
-        // 1. Trigger Django API (This will notify family members on backend)
+    const triggerSOSAlert = async (latitude = null, longitude = null) => {
+      try {
         await api.post('/emergency/alerts/trigger/', {
           latitude,
-          longitude
+          longitude,
+          message: "Emergency SOS triggered with live location sharing!"
         });
-
         setSuccess(true);
         setTimeout(() => setSuccess(false), 5000);
-      });
-    } catch (err) {
-      console.error('SOS failed:', err);
-    } finally {
-      setLoading(false);
+      } catch (err) {
+        console.error('SOS failed:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (navigator.geolocation && locationSharing) {
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          await triggerSOSAlert(pos.coords.latitude, pos.coords.longitude);
+        },
+        async (err) => {
+          console.warn("Geolocation failed/blocked. Triggering SOS without location:", err);
+          await triggerSOSAlert(null, null);
+        },
+        { timeout: 5000 }
+      );
+    } else {
+      await triggerSOSAlert(null, null);
     }
   };
 
@@ -44,14 +87,14 @@ export default function Emergency() {
         : 'Location unavailable',
       time: new Date().toLocaleTimeString(),
     };
-    setIncomingAlerts((prev) => [alert, ...prev.slice(0, 4)]); // keep last 5
+    setIncomingAlerts((prev) => [alert, ...prev.slice(0, 4)]);
   }, []);
 
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-navy-900 tracking-tight">Emergency Protocol</h1>
-        <p className="text-navy-500 mt-1">Configure SOS settings and emergency contacts.</p>
+        <h1 className="text-2xl font-bold text-navy-900 tracking-tight">Emergency Assistance Protocol</h1>
+        <p className="text-navy-500 mt-1">Locate nearby police control stations and instantly alert family.</p>
       </header>
 
       {/* Live incoming SOS alerts from mobile */}
@@ -81,79 +124,123 @@ export default function Emergency() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-red-50 p-8 rounded-3xl border border-red-100 text-center flex flex-col items-center justify-center relative overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Main SOS Trigger */}
+        <div className="lg:col-span-1 bg-red-50 p-8 rounded-3xl border border-red-100 text-center flex flex-col items-center justify-center relative overflow-hidden">
           {loading && <div className="absolute top-0 left-0 w-full h-1 bg-red-500 animate-pulse"></div>}
           <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mb-6 shadow-lg shadow-red-500/20">
             {success ? <CheckCircle className="w-12 h-12 text-emerald-500" /> : <ShieldAlert className="w-12 h-12 text-red-500" />}
           </div>
           <h2 className="text-2xl font-bold text-red-900 mb-2">{success ? 'SOS Sent!' : 'Activate SOS'}</h2>
-          <p className="text-red-700/80 mb-8 max-w-sm">
+          <p className="text-red-700/80 mb-8 max-w-sm text-sm">
             {success 
               ? 'Your family has been notified and your live location is being shared.' 
-              : 'Pressing this button will instantly alert all family members, share your live location, and contact local emergency services if configured.'}
+              : 'Pressing this button will instantly alert all family members via WebSockets & FCM and share your live GPS position.'}
           </p>
           <button 
             onClick={handleSOS}
             disabled={loading || success}
-            className={`text-xl font-bold px-12 py-4 rounded-full transition-all hover:scale-105 shadow-xl flex items-center justify-center ${
+            className={`w-full text-lg font-bold py-4 rounded-2xl transition-all hover:scale-105 shadow-xl flex items-center justify-center ${
               success 
                 ? 'bg-emerald-500 text-white cursor-default' 
                 : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/30'
             }`}
           >
-            {loading ? <Loader2 className="w-8 h-8 animate-spin" /> : success ? 'ALERT ACTIVE' : 'PRESS TO SEND SOS'}
+            {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : success ? 'ALERT ACTIVE' : 'PRESS TO SEND SOS'}
           </button>
         </div>
 
-        <div className="space-y-6">
+        {/* Nearby Police Stations */}
+        <div className="lg:col-span-2 space-y-6">
           <div className="bg-white p-6 rounded-3xl border border-navy-100 shadow-sm">
-            <h3 className="text-lg font-bold text-navy-900 mb-4 flex items-center">
-              <AlertTriangle className="w-5 h-5 text-orange-500 mr-2" />
-              Active Alerts
-            </h3>
-            {incomingAlerts.length === 0 ? (
-              <p className="text-navy-500 text-sm">No active alerts at the moment.</p>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-navy-900 flex items-center">
+                <Building2 className="w-5 h-5 text-blue-600 mr-2" />
+                Nearby Police Stations
+              </h3>
+              <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
+                Sorted by Distance
+              </span>
+            </div>
+
+            {fetchingPolice ? (
+              <div className="p-8 text-center text-navy-400 flex items-center justify-center space-x-2">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                <span className="text-sm">Locating nearest police control stations...</span>
+              </div>
+            ) : policeStations.length === 0 ? (
+              <p className="text-navy-500 text-sm p-4 text-center">No police stations found nearby.</p>
             ) : (
-              <p className="text-red-600 text-sm font-bold">{incomingAlerts.length} active SOS alert(s) — check above.</p>
+              <div className="space-y-4">
+                {policeStations.map((station) => (
+                  <div key={station.id} className="p-4 bg-navy-50/70 rounded-2xl border border-navy-100 hover:border-blue-200 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-navy-900">{station.name}</span>
+                        <span className="text-xs bg-navy-200 text-navy-700 px-2 py-0.5 rounded-md font-bold">
+                          {station.distance_formatted}
+                        </span>
+                      </div>
+                      <p className="text-xs text-navy-500">{station.address}</p>
+                      <p className="text-[11px] text-blue-600 font-semibold">
+                        🚘 Est. Travel: {station.estimated_travel_time}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center space-x-2 shrink-0">
+                      <a
+                        href={`tel:${station.phone_number || '100'}`}
+                        className="flex items-center space-x-1.5 bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>Call ({station.phone_number || '100'})</span>
+                      </a>
+                      <a
+                        href={station.google_maps_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
+                      >
+                        <Navigation className="w-3.5 h-3.5" />
+                        <span>Navigate</span>
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-navy-100 shadow-sm">
-            <h3 className="text-lg font-bold text-navy-900 mb-4 flex items-center">
-              <Phone className="w-5 h-5 text-blue-500 mr-2" />
-              Emergency Contacts
-            </h3>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center p-3 bg-navy-50 rounded-xl">
-                <div>
-                  <p className="font-semibold text-navy-900">Primary Care Physician</p>
-                  <p className="text-sm text-navy-500">Dr. Smith</p>
-                </div>
-                <button className="text-brand-600 hover:text-brand-700 font-medium text-sm">Call</button>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-navy-50 rounded-xl">
-                <div>
-                  <p className="font-semibold text-navy-900">Local Hospital</p>
-                  <p className="text-sm text-navy-500">City General</p>
-                </div>
-                <button className="text-brand-600 hover:text-brand-700 font-medium text-sm">Call</button>
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white p-6 rounded-3xl border border-navy-100 shadow-sm">
+              <h3 className="text-lg font-bold text-navy-900 mb-2 flex items-center">
+                <AlertTriangle className="w-5 h-5 text-orange-500 mr-2" />
+                Active SOS Status
+              </h3>
+              {incomingAlerts.length === 0 ? (
+                <p className="text-navy-500 text-sm">No active SOS alerts in your family circle.</p>
+              ) : (
+                <p className="text-red-600 text-sm font-bold">{incomingAlerts.length} active emergency alert(s) active.</p>
+              )}
             </div>
-            <button className="mt-4 w-full py-2 border-2 border-dashed border-navy-200 text-navy-500 rounded-xl hover:bg-navy-50 hover:border-navy-300 transition-colors font-medium text-sm">
-              + Add Contact
-            </button>
-          </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-navy-100 shadow-sm">
-            <h3 className="text-lg font-bold text-navy-900 mb-4 flex items-center">
-              <MapPin className="w-5 h-5 text-purple-500 mr-2" />
-              Location Sharing
-            </h3>
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-navy-500">Share live location with family during SOS</p>
-              <div className="w-11 h-6 bg-brand-500 rounded-full relative cursor-pointer">
-                <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full"></div>
+            <div className="bg-white p-6 rounded-3xl border border-navy-100 shadow-sm">
+              <h3 className="text-lg font-bold text-navy-900 mb-2 flex items-center">
+                <MapPin className="w-5 h-5 text-purple-500 mr-2" />
+                Live Location Sharing
+              </h3>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-navy-500">Attach GPS position when triggering SOS</p>
+                <button
+                  onClick={() => setLocationSharing(!locationSharing)}
+                  className={`w-11 h-6 rounded-full relative transition-colors ${
+                    locationSharing ? 'bg-brand-500' : 'bg-navy-200'
+                  }`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                    locationSharing ? 'right-1' : 'left-1'
+                  }`}></div>
+                </button>
               </div>
             </div>
           </div>

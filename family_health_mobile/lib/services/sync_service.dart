@@ -90,6 +90,9 @@ class SyncService {
     final uri = Uri.parse('$_wsBase/ws/sync/?token=$token');
     try {
       _channel = WebSocketChannel.connect(uri);
+      // Await handshake — catches SocketException / WebSocketChannelException
+      // that would otherwise surface as unhandled errors on the stream.
+      await _channel!.ready;
       _channel!.stream.listen(
         (data) {
           try {
@@ -104,6 +107,9 @@ class SyncService {
       );
       _retryCount = 0;
     } catch (e) {
+      // Swallow connection errors (host unreachable, no network, etc.)
+      // _onDisconnect will schedule a retry with exponential back-off.
+      _channel = null;
       _onDisconnect();
     }
   }

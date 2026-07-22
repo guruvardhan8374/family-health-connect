@@ -121,6 +121,14 @@ class SyncConsumer(AsyncJsonWebsocketConsumer):
             'data': event.get('data', {}),
         })
 
+    async def profile_picture_updated(self, event):
+        """Profile picture created, updated, or removed."""
+        await self.send_json({
+            'type': 'profile.picture_updated',
+            'section': event.get('section', 'avatar'),
+            'data': event.get('data', {}),
+        })
+
     async def ai_history_update(self, event):
         """AI Assistant history record created or updated."""
         await self.send_json({

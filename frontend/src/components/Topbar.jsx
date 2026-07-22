@@ -3,6 +3,7 @@ import { Bell, Search, UserCircle, LogOut, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
+import UserAvatar from './UserAvatar';
 
 export default function Topbar() {
   const [notifications, setNotifications] = useState([]);
@@ -99,9 +100,12 @@ export default function Topbar() {
             onClick={() => setShowProfile(!showProfile)}
             className="flex items-center space-x-2 pl-4 border-l border-navy-100 hover:opacity-80 transition-all"
           >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-500 to-brand-400 flex items-center justify-center text-white font-bold shadow-md shadow-brand-500/20">
-              {initials}
-            </div>
+            <UserAvatar
+              src={user?.profile_picture}
+              name={displayName}
+              size="sm"
+              className="w-9 h-9"
+            />
             <div className="text-left hidden sm:block">
               <p className="text-sm font-bold text-navy-900 leading-none">{displayName}</p>
               <p className="text-[10px] text-navy-400 mt-1 uppercase font-bold tracking-wider">{user?.role || 'Member'}</p>

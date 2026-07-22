@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     UserViewSet, LocationHistoryViewSet, RegisterView, VerifyOTPView,
     PasswordResetRequestView, PasswordResetConfirmView, UserProfileView,
-    UserSettingsViewSet, ChangePasswordView, DebugDBView, ListUsersDebugView, GoogleAuthView, ResendOTPView
+    UserSettingsViewSet, ChangePasswordView, DebugDBView, ListUsersDebugView, 
+    GoogleAuthView, ResendOTPView, RegisterFCMTokenView, AvatarUploadView
 )
 
 router = DefaultRouter()
@@ -22,5 +23,7 @@ urlpatterns = [
     path('password-reset-confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
     path('profile/', UserProfileView.as_view(), name='user-profile'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
+    path('register-fcm/', RegisterFCMTokenView.as_view(), name='register-fcm'),
+    path('avatar/', AvatarUploadView.as_view(), name='user-avatar'),
     path('', include(router.urls)),
 ]

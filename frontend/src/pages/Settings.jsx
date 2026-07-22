@@ -4,6 +4,7 @@ import api from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useSyncEvent } from '../contexts/SyncContext';
 import { applyTheme } from '../utils/theme';
+import UserAvatar from '../components/UserAvatar';
 import {
   User, Bell, Shield, Eye, Moon, Sun,
   Camera, Lock, Key, Trash2, LogOut,
@@ -164,27 +165,53 @@ export default function Settings() {
       triggerFeedback('Please select a valid image file.', true);
       return;
     }
+    if (file.size > 5 * 1024 * 1024) {
+      triggerFeedback('File too large. Maximum allowed size is 5 MB.', true);
+      return;
+    }
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64String = reader.result;
-      setSaving(true);
-      try {
-        const res = await api.put('/settings/profile/', {
-          ...profile,
-          profile_picture: base64String
-        });
-        setProfile(res.data);
-        triggerFeedback('Profile picture uploaded successfully!');
-        refreshUser();
-      } catch (err) {
-        console.error(err);
-        triggerFeedback('Failed to upload profile picture.', true);
-      } finally {
-        setSaving(false);
-      }
-    };
-    reader.readAsDataURL(file);
+    const formData = new FormData();
+    formData.append('avatar', file);
+
+    setSaving(true);
+    try {
+      const res = await api.post('/users/avatar/', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      setProfile((prev) => ({
+        ...prev,
+        profile_picture: res.data.profile_picture,
+      }));
+      triggerFeedback('Profile picture uploaded successfully!');
+      refreshUser();
+    } catch (err) {
+      console.error(err);
+      const errMsg = err.response?.data?.error || 'Failed to upload profile picture.';
+      triggerFeedback(errMsg, true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleProfilePictureDelete = async () => {
+    if (!window.confirm('Are you sure you want to remove your profile picture?')) return;
+    setSaving(true);
+    try {
+      await api.delete('/users/avatar/');
+      setProfile((prev) => ({
+        ...prev,
+        profile_picture: null,
+      }));
+      triggerFeedback('Profile picture removed successfully!');
+      refreshUser();
+    } catch (err) {
+      console.error(err);
+      triggerFeedback('Failed to remove profile picture.', true);
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Save specific settings endpoint helper (toggles & selects)
@@ -340,17 +367,12 @@ export default function Settings() {
             <section className="bg-white dark:bg-navy-900/40 backdrop-blur-md p-6 md:p-8 rounded-[2rem] border border-navy-100 dark:border-navy-800 shadow-xl shadow-navy-100/10 space-y-8 transition-all">
               <div className="flex flex-col sm:flex-row items-center gap-6 pb-6 border-b border-navy-100 dark:border-navy-800">
                 <div className="relative group">
-                  {profile.profile_picture ? (
-                    <img
-                      src={profile.profile_picture}
-                      alt="Avatar"
-                      className="w-28 h-28 rounded-3xl object-cover shadow-md border-4 border-white dark:border-navy-900"
-                    />
-                  ) : (
-                    <div className="w-28 h-28 rounded-3xl bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-4xl font-extrabold text-white shadow-inner">
-                      {profile.username?.charAt(0).toUpperCase() || 'U'}
-                    </div>
-                  )}
+                  <UserAvatar
+                    src={profile.profile_picture}
+                    name={profile.username}
+                    size="xl"
+                    className="w-28 h-28 border-4 border-white dark:border-navy-900 shadow-md"
+                  />
                   <label className="absolute -bottom-2 -right-2 p-2.5 bg-navy-900 text-white rounded-xl shadow-lg border-4 border-white dark:border-navy-800 cursor-pointer hover:scale-110 active:scale-95 transition-all">
                     <Camera className="w-4 h-4" />
                     <input
@@ -364,9 +386,20 @@ export default function Settings() {
                 <div className="text-center sm:text-left">
                   <h3 className="text-2xl font-bold text-navy-900 dark:text-white">{profile.username || 'User Profile'}</h3>
                   <p className="text-navy-400 text-sm mt-1">{profile.email}</p>
-                  <span className="inline-block mt-2 text-xs font-black uppercase tracking-wider text-brand-600 bg-brand-50 dark:bg-brand-900/30 px-3 py-1.5 rounded-lg border border-brand-100 dark:border-brand-900/50">
-                    Active Member
-                  </span>
+                  <div className="flex items-center gap-3 mt-2">
+                    <span className="inline-block text-xs font-black uppercase tracking-wider text-brand-600 bg-brand-50 dark:bg-brand-900/30 px-3 py-1.5 rounded-lg border border-brand-100 dark:border-brand-900/50">
+                      Active Member
+                    </span>
+                    {profile.profile_picture && (
+                      <button
+                        type="button"
+                        onClick={handleProfilePictureDelete}
+                        className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:text-rose-700 underline"
+                      >
+                        Remove Photo
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 

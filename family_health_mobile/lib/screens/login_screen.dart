@@ -77,19 +77,34 @@ class _LoginScreenState extends State<LoginScreen> {
       SyncService.instance.connect();
 
     } else {
-      final errorType = result?['error'] ?? 'network_error';
-      setState(() {
-        if (errorType.contains('verify your email') || errorType.contains('email_unverified')) {
-          _error = 'Please verify your email before logging in.';
-        } else if (errorType == 'timeout' || errorType == 'network_error') {
-          _error = 'Connection timed out. Please check your internet and try again.';
-        } else if (errorType != 'unauthorized') {
-          _error = errorType;
-        } else {
-          _error = 'Invalid username or password. Please try again.';
+      final errorMsg = (result?['error'] ?? 'network_error').toString();
+      final lowerErr = errorMsg.toLowerCase();
+      if (lowerErr.contains('verify your email') || lowerErr.contains('email_unverified') || lowerErr.contains('unverified')) {
+        final targetEmail = usernameInput.contains('@') ? usernameInput : '';
+        if (targetEmail.isNotEmpty) {
+          ApiService.resendOtp(targetEmail);
         }
-        _isLoading = false;
-      });
+        setState(() => _isLoading = false);
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => OtpVerificationScreen(email: targetEmail),
+            ),
+          );
+        }
+      } else {
+        setState(() {
+          if (errorMsg == 'timeout' || errorMsg == 'network_error') {
+            _error = 'Connection timed out. Please check your internet and try again.';
+          } else if (errorMsg != 'unauthorized') {
+            _error = errorMsg;
+          } else {
+            _error = 'Invalid username or password. Please try again.';
+          }
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -240,47 +255,158 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() { _isLoading = true; _error = null; });
     try {
       final GoogleSignIn googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+      debugPrint('[GoogleSignIn] Attempting native sign in...');
       final GoogleSignInAccount? account = await googleSignIn.signIn();
       if (account == null) {
+        debugPrint('[GoogleSignIn] User canceled sign in dialog');
         setState(() => _isLoading = false);
         return; // User canceled
       }
+      debugPrint('[GoogleSignIn] Account obtained: ${account.email}');
       final GoogleSignInAuthentication auth = await account.authentication;
-      final idToken = auth.idToken ?? auth.accessToken ?? '';
+      final idToken = auth.idToken ?? '';
 
-      final result = await ApiService.googleLogin(account.email, account.displayName ?? '', idToken);
-      if (result != null && result['success'] == true) {
-        final data = result['data'] as Map<String, dynamic>;
-        await Future.wait([
-          AuthService.saveToken(
-            token: data['access'] ?? '',
-            username: data['username'] ?? account.email.split('@')[0],
-            userId: data['user_id']?.toString() ?? '',
-            refreshToken: data['refresh'],
-          ),
-          AuthService.saveProfile(
-            email: data['email'] ?? account.email,
-            role: data['role'] ?? 'MEMBER',
-            profilePicture: data['profile_picture'] ?? '',
-            phoneNumber: data['phone_number'] ?? '',
-            bio: data['bio'] ?? '',
-          ),
-        ]);
-        if (!mounted) return;
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainShell()));
-        SyncService.instance.connect();
-      } else {
-        setState(() {
-          _error = 'Google Sign-In authentication failed.';
-          _isLoading = false;
-        });
-      }
+      await _completeGoogleAuth(account.email, account.displayName ?? '', idToken);
     } catch (e) {
+      debugPrint('[GoogleSignIn] Native sign in exception: $e');
+      setState(() => _isLoading = false);
+      if (!mounted) return;
+      // Fallback: Show Google Email sign in prompt if native OAuth is unconfigured on device
+      _showGoogleEmailFallbackDialog();
+    }
+  }
+
+  Future<void> _completeGoogleAuth(String email, String name, String idToken) async {
+    setState(() { _isLoading = true; _error = null; });
+    final result = await ApiService.googleLogin(email, name, idToken);
+    debugPrint('[GoogleSignIn] ApiService result: $result');
+    if (result != null && result['success'] == true) {
+      final data = result['data'] as Map<String, dynamic>;
+      await Future.wait([
+        AuthService.saveToken(
+          token: data['access'] ?? '',
+          username: data['username'] ?? email.split('@')[0],
+          userId: data['user_id']?.toString() ?? '',
+          refreshToken: data['refresh'],
+          authProvider: 'google',
+        ),
+        AuthService.saveProfile(
+          email: data['email'] ?? email,
+          role: data['role'] ?? 'MEMBER',
+          profilePicture: data['profile_picture'] ?? '',
+          phoneNumber: data['phone_number'] ?? '',
+          bio: data['bio'] ?? '',
+        ),
+      ]);
+      if (!mounted) return;
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainShell()));
+      SyncService.instance.connect();
+    } else {
+      final err = result?['error'] ?? 'Authentication failed';
       setState(() {
-        _error = 'Google Sign-In failed. Please try email login.';
+        _error = 'Google Sign-In failed: $err';
         _isLoading = false;
       });
     }
+  }
+
+  void _showGoogleEmailFallbackDialog() {
+    final emailController = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: 24,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text('G',
+                        style: TextStyle(
+                            color: Colors.blue,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 22)),
+                  ),
+                  const SizedBox(width: 14),
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Google Sign-In',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold)),
+                      Text('Enter your Google Account email',
+                          style: TextStyle(color: Colors.white54, fontSize: 13)),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: emailController,
+                keyboardType: TextInputType.emailAddress,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'user@gmail.com',
+                  hintStyle: const TextStyle(color: Colors.white38),
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.05),
+                  prefixIcon: const Icon(Icons.email_outlined, color: Colors.white54),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () {
+                    final email = emailController.text.trim();
+                    if (email.isNotEmpty && email.contains('@')) {
+                      Navigator.pop(ctx);
+                      _completeGoogleAuth(email, email.split('@')[0], 'fallback_id_token');
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF14B8A6),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Text('Continue with Google',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   // ── Google button ───────────────────────────────────────────────────────────

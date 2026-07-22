@@ -62,6 +62,9 @@ class HealthSyncService {
     try {
       debugPrint('[HealthSyncWS] Connecting to health channel...');
       _channel = WebSocketChannel.connect(uri);
+      // Await handshake — catches SocketException / WebSocketChannelException
+      // that would otherwise surface as unhandled errors on the stream.
+      await _channel!.ready;
       _channel!.stream.listen(
         (data) {
           debugPrint('[HealthSyncWS] Received: $data');
@@ -74,7 +77,9 @@ class HealthSyncService {
       _retryCount = 0;
       debugPrint('[HealthSyncWS] Connected.');
     } catch (e) {
-      debugPrint('[HealthSyncWS] Connection failed: $e');
+      // Swallow connection errors silently (backend offline / no network).
+      debugPrint('[HealthSyncWS] Connection failed (will retry): $e');
+      _channel = null;
       _onDisconnect();
     }
   }

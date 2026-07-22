@@ -1,8 +1,6 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
-import '../services/sync_service.dart';
 import '../services/location_service.dart';
 
 class EmergencyScreen extends StatefulWidget {
@@ -13,75 +11,26 @@ class EmergencyScreen extends StatefulWidget {
 }
 
 class _EmergencyScreenState extends State<EmergencyScreen> {
-  StreamSubscription? _syncSubscription;
+  List<Map<String, dynamic>> _policeStations = [];
+  bool _isLoadingPolice = true;
 
   @override
   void initState() {
     super.initState();
-    _syncSubscription = SyncService.instance.stream.listen((event) {
-      if (event['type'] == 'emergency.alert') {
-        _showIncomingSOSDialog(event['data']);
-      }
-    });
+    _loadNearbyPolice();
   }
 
-  @override
-  void dispose() {
-    _syncSubscription?.cancel();
-    super.dispose();
-  }
-
-  void _showIncomingSOSDialog(Map<String, dynamic>? data) {
-    if (!mounted || data == null) return;
-    final triggeredBy = data['triggered_by'] ?? 'Family Member';
-    final message = data['message'] ?? 'Emergency! I need help immediately.';
-    final lat = data['location_lat'];
-    final lng = data['location_lng'];
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            const Icon(Icons.emergency_share, color: Color(0xFFEF4444)),
-            const SizedBox(width: 8),
-            Text('🚨 SOS: $triggeredBy', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFEF4444))),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(message, style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            if (lat != null && lng != null)
-              Text('Location: $lat, $lng', style: const TextStyle(fontSize: 13, color: Colors.grey)),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Dismiss', style: TextStyle(color: Color(0xFF64748B))),
-          ),
-          if (lat != null && lng != null)
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF14B8A6),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () async {
-                Navigator.pop(ctx);
-                final mapUrl = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
-                if (await canLaunchUrl(mapUrl)) {
-                  await launchUrl(mapUrl, mode: LaunchMode.externalApplication);
-                }
-              },
-              child: const Text('View on Map', style: TextStyle(color: Colors.white)),
-            ),
-        ],
-      ),
-    );
+  Future<void> _loadNearbyPolice() async {
+    final pos = await LocationService.getCurrentPosition();
+    final lat = pos?.latitude ?? 12.9716;
+    final lng = pos?.longitude ?? 77.5946;
+    final stations = await ApiService.getNearbyPolice(lat: lat, lng: lng);
+    if (mounted) {
+      setState(() {
+        _policeStations = stations;
+        _isLoadingPolice = false;
+      });
+    }
   }
 
   @override
@@ -91,19 +40,19 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Emergency SOS'),
+        title: const Text('Emergency Assistance'),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           // Big SOS Button
           Container(
-            margin: const EdgeInsets.symmetric(vertical: 24),
+            margin: const EdgeInsets.symmetric(vertical: 16),
             child: Center(
               child: GestureDetector(
                 onTap: () => _showSOSDialog(context),
                 child: Container(
-                  width: 180, height: 180,
+                  width: 170, height: 170,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: const RadialGradient(
@@ -117,19 +66,135 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                   child: const Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.shield_rounded, color: Colors.white, size: 48),
-                      SizedBox(height: 8),
+                      Icon(Icons.shield_rounded, color: Colors.white, size: 44),
+                      SizedBox(height: 6),
                       Text('SOS', style: TextStyle(color: Colors.white,
-                        fontSize: 28, fontWeight: FontWeight.bold,
+                        fontSize: 26, fontWeight: FontWeight.bold,
                         letterSpacing: 4)),
-                      Text('Hold to activate', style: TextStyle(color: Colors.white70,
-                        fontSize: 12)),
+                      Text('Tap to activate', style: TextStyle(color: Colors.white70,
+                        fontSize: 11)),
                     ],
                   ),
                 ),
               ),
             ),
           ),
+
+          // --- NEARBY POLICE STATIONS SECTION ---
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Nearby Police Stations',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              if (_isLoadingPolice)
+                const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3B82F6)))
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3B82F6).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('Sorted by distance', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF3B82F6))),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (!_isLoadingPolice && _policeStations.isEmpty)
+            const Text('No police stations located nearby.', style: TextStyle(color: Colors.grey, fontSize: 13))
+          else
+            ..._policeStations.map((station) => Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.blue.withValues(alpha: 0.15)),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 8)],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF3B82F6).withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.local_police_rounded, color: Color(0xFF3B82F6), size: 20),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(station['name'] ?? 'Police Station',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: isDark ? Colors.white : const Color(0xFF0F172A))),
+                            Text(station['address'] ?? '',
+                              style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(station['distance_formatted'] ?? '',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF2563EB))),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF10B981),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                          ),
+                          icon: const Icon(Icons.phone_rounded, size: 16),
+                          label: Text('Call (${station['phone_number'] ?? '100'})', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            final telUrl = Uri.parse('tel:${station['phone_number'] ?? '100'}');
+                            if (await canLaunchUrl(telUrl)) {
+                              await launchUrl(telUrl);
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF3B82F6),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                          ),
+                          icon: const Icon(Icons.navigation_rounded, size: 16),
+                          label: const Text('Navigate', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            final mapsUrl = Uri.parse(station['google_maps_link'] ?? '');
+                            if (await canLaunchUrl(mapsUrl)) {
+                              await launchUrl(mapsUrl, mode: LaunchMode.externalApplication);
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            )),
+
+          const SizedBox(height: 16),
 
           // Emergency contacts
           const Text('Emergency Contacts',
@@ -139,10 +204,10 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
             {'name': 'Mom', 'phone': '+919876543210', 'type': 'Family'},
             {'name': 'Dad', 'phone': '+919876543211', 'type': 'Family'},
             {'name': 'Ambulance', 'phone': '108', 'type': 'Emergency'},
-            {'name': 'Police', 'phone': '100', 'type': 'Emergency'},
+            {'name': 'Police Control Room', 'phone': '100', 'type': 'Emergency'},
           ].map((contact) => Container(
             margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: Theme.of(context).cardColor,
               borderRadius: BorderRadius.circular(16),
@@ -229,7 +294,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
               final double lat = position?.latitude ?? 0.0;
               final double lng = position?.longitude ?? 0.0;
 
-              // Also save the current location to the user's history
+              // Save current location to the user's history
               if (position != null) {
                 await ApiService.updateLocation(lat: lat, lng: lng);
               }

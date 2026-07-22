@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
 
 class ProfileDetailsScreen extends StatefulWidget {
@@ -24,6 +26,9 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
   final _addressController = TextEditingController();
   final _picController = TextEditingController();
 
+  File? _localImageFile;
+  final ImagePicker _picker = ImagePicker();
+
   @override
   void initState() {
     super.initState();
@@ -47,9 +52,69 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
     setState(() => _isLoading = false);
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final pickedFile = await _picker.pickImage(
+        source: source,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+      if (pickedFile != null) {
+        setState(() {
+          _localImageFile = File(pickedFile.path);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error picking image: $e');
+    }
+  }
+
+  Future<void> _deleteAvatar() async {
+    setState(() => _isSaving = true);
+    final success = await ApiService.deleteAvatar();
+    setState(() => _isSaving = false);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success ? '✅ Photo removed successfully!' : '❌ Failed to remove photo.'),
+          backgroundColor: success ? Colors.green : Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      if (success) {
+        setState(() {
+          _localImageFile = null;
+          _picController.clear();
+        });
+      }
+    }
+  }
+
   Future<void> _saveProfile() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
+
+    // Upload avatar if a new one was selected locally
+    if (_localImageFile != null) {
+      final uploadRes = await ApiService.uploadAvatar(_localImageFile!);
+      if (uploadRes != null && uploadRes['profile_picture'] != null) {
+        _picController.text = uploadRes['profile_picture'].toString();
+      } else {
+        setState(() => _isSaving = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ Failed to upload profile picture.'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+    }
 
     final Map<String, dynamic> data = {
       'username': _usernameController.text.trim(),
@@ -116,17 +181,84 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                 children: [
                   // Profile image placeholder or dynamic URL
                   Center(
-                    child: Stack(
+                    child: Column(
                       children: [
-                        CircleAvatar(
-                          radius: 50,
-                          backgroundColor: const Color(0xFF14B8A6).withValues(alpha: 0.1),
-                          backgroundImage: _picController.text.isNotEmpty
-                              ? NetworkImage(_picController.text)
-                              : null,
-                          child: _picController.text.isEmpty
-                              ? const Icon(Icons.person_rounded, size: 50, color: Color(0xFF14B8A6))
-                              : null,
+                        Stack(
+                          children: [
+                            CircleAvatar(
+                              radius: 55,
+                              backgroundColor: const Color(0xFF14B8A6).withOpacity(0.1),
+                              backgroundImage: _localImageFile != null
+                                  ? FileImage(_localImageFile!) as ImageProvider
+                                  : (_picController.text.isNotEmpty
+                                      ? NetworkImage(_picController.text)
+                                      : null),
+                              child: _localImageFile == null && _picController.text.isEmpty
+                                  ? const Icon(Icons.person_rounded, size: 55, color: Color(0xFF14B8A6))
+                                  : null,
+                            ),
+                            Positioned(
+                              bottom: 0,
+                              right: 0,
+                              child: GestureDetector(
+                                onTap: () {
+                                  showModalBottomSheet(
+                                    context: context,
+                                    builder: (context) => SafeArea(
+                                      child: Wrap(
+                                        children: [
+                                          ListTile(
+                                            leading: const Icon(Icons.camera_alt_outlined, color: Color(0xFF14B8A6)),
+                                            title: const Text('Take Photo'),
+                                            onTap: () {
+                                              Navigator.pop(context);
+                                              _pickImage(ImageSource.camera);
+                                            },
+                                          ),
+                                          ListTile(
+                                            leading: const Icon(Icons.photo_library_outlined, color: Color(0xFF14B8A6)),
+                                            title: const Text('Choose from Gallery'),
+                                            onTap: () {
+                                              Navigator.pop(context);
+                                              _pickImage(ImageSource.gallery);
+                                            },
+                                          ),
+                                          if (_picController.text.isNotEmpty || _localImageFile != null)
+                                            ListTile(
+                                              leading: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                                              title: const Text('Remove Current Photo', style: TextStyle(color: Colors.red)),
+                                              onTap: () {
+                                                Navigator.pop(context);
+                                                _deleteAvatar();
+                                              },
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF14B8A6),
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black26,
+                                        blurRadius: 4,
+                                        offset: Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.camera_alt_rounded,
+                                    size: 20,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -139,11 +271,6 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                     label: 'Username',
                     icon: Icons.person_outline_rounded,
                     validator: (val) => val == null || val.trim().isEmpty ? 'Username is required' : null,
-                  ),
-                  _buildTextField(
-                    controller: _picController,
-                    label: 'Profile Picture URL',
-                    icon: Icons.image_outlined,
                   ),
                   const SizedBox(height: 16),
 

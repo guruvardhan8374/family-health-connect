@@ -203,28 +203,28 @@ def on_health_record_saved(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender='emergency.SOSAlert')
 def on_sos_saved(sender, instance, created, **kwargs):
-    if created:
-        payload = {
-            'id': instance.id,
-            'message': instance.message,
-            'location_lat': instance.location_lat,
-            'location_lng': instance.location_lng,
-            'triggered_at': instance.triggered_at.isoformat(),
-            'status': instance.status,
-            'triggered_by': instance.user.username if instance.user else None,
-            'user_id': instance.user_id,
-        }
-        _push(instance.user_id, 'emergency.alert', 'sos', payload)
-        # Also notify all family members
-        try:
-            from family.models import FamilyMembership
-            family_ids = FamilyMembership.objects.filter(
-                user_id=instance.user_id, is_approved=True
-            ).values_list('family_group_id', flat=True)
-            for fid in family_ids:
-                _push_to_family_group_id(fid, 'emergency.alert', 'sos', payload, exclude_user=instance.user_id)
-        except Exception:
-            pass
+    payload = {
+        'id': instance.id,
+        'message': instance.message,
+        'location_lat': instance.location_lat,
+        'location_lng': instance.location_lng,
+        'triggered_at': instance.triggered_at.isoformat(),
+        'status': instance.status,
+        'triggered_by': instance.user.username if instance.user else None,
+        'user_id': instance.user_id,
+        'is_resolved': getattr(instance, 'is_resolved', False),
+    }
+    _push(instance.user_id, 'emergency.alert', 'sos', payload)
+    # Also notify all family members
+    try:
+        from family.models import FamilyMembership
+        family_ids = FamilyMembership.objects.filter(
+            user_id=instance.user_id, is_approved=True
+        ).values_list('family_group_id', flat=True)
+        for fid in family_ids:
+            _push_to_family_group_id(fid, 'emergency.alert', 'sos', payload, exclude_user=instance.user_id)
+    except Exception:
+        pass
 
 
 # ─── Family signals ────────────────────────────────────────────────────────────

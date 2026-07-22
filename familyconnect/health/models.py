@@ -127,3 +127,15 @@ class HealthAlert(models.Model):
 
     def __str__(self):
         return f"[{self.severity}] {self.user.username}: {self.title}"
+
+class MedicationReminder(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='medication_reminders')
+    medicine_name = models.CharField(max_length=100)
+    dosage = models.CharField(max_length=50)
+    frequency = models.CharField(max_length=50, default='DAILY')
+    reminder_time = models.TimeField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.medicine_name} ({self.reminder_time})"

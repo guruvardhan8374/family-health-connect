@@ -64,3 +64,13 @@ class Notification(models.Model):
     def __str__(self):
         return f"[Legacy] {self.title} for {self.user.username}"
 
+class ActivityLog(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='activity_logs')
+    action = models.CharField(max_length=100)
+    details = models.TextField(blank=True, null=True)
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.action} at {self.created_at}"
+

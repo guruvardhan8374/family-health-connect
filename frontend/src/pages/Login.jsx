@@ -172,8 +172,9 @@ export default function Login() {
         setError('Server is unreachable. Please wait a moment and try again — the server may be waking up.');
       } else if (err.response.status === 400 || err.response.status === 401) {
         const data = err.response.data;
-        if (data?.email_unverified || data?.detail?.includes?.('verify your email')) {
-          const unverified = data.email || email.trim();
+        const dataStr = JSON.stringify(data || {}).toLowerCase();
+        if (dataStr.includes('verify your email') || dataStr.includes('email_unverified') || data?.email_unverified) {
+          const unverified = data?.email || email.trim();
           setUnverifiedEmail(unverified);
           // Auto-navigate to OTP verification page immediately
           navigate('/verify-otp', { state: { email: unverified } });

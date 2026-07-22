@@ -122,7 +122,7 @@ export default function OTPVerification() {
     setError('');
     setSuccess('');
     try {
-      await api.post('/users/password-reset/', { email });
+      await api.post('/users/resend-otp/', { email });
       setSuccess('A new OTP has been sent to your email.');
       setOtp(Array(OTP_LENGTH).fill(''));
       focusInput(0);

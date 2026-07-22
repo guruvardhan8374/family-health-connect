@@ -12,7 +12,7 @@ class HealthScreen extends StatefulWidget {
   State<HealthScreen> createState() => _HealthScreenState();
 }
 
-class _HealthScreenState extends State<HealthScreen> {
+class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver {
   List<dynamic> _records = [];
   bool _isLoading = true;
 
@@ -37,10 +37,24 @@ class _HealthScreenState extends State<HealthScreen> {
   StreamSubscription? _syncSubscription;
   Timer? _pollingTimer;
 
+  // ── Core metrics & Vercel sync state ──────────────────────────────────────
+  double _hubHeartRate   = 0.0;
+  int    _hubSteps       = 0;
+  double _hubBloodOxygen = 0.0;
+  double _hubSleepHours  = 0.0;
+  bool   _hubLoading     = false;
+
+  Timer?    _fifteenMinSyncTimer;
+  DateTime? _lastSyncedAt;
+  bool      _isSyncing = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initHealthSync();
+    _startPeriodic15MinSync();
+
     _syncSubscription = SyncService.instance.stream.listen((event) {
       if (event['type'] == 'health.update') {
         _fetchData();
@@ -50,15 +64,200 @@ class _HealthScreenState extends State<HealthScreen> {
     _pollingTimer = Timer.periodic(const Duration(seconds: 20), (timer) {
       _fetchTodaySummary();
     });
+    // Ask for permissions then trigger initial Vercel sync
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _requestHealthPermissionsWithDialog();
+      _performVercelSync();
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _fifteenMinSyncTimer?.cancel();
     _syncSubscription?.cancel();
     _pollingTimer?.cancel();
     HealthService.instance.stopLiveMonitoring();
     HealthSyncService.instance.disconnect();
     super.dispose();
+  }
+
+  // ── App Lifecycle: Sync when app comes to foreground ─────────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('[HealthHub] App resumed to foreground — triggering sync');
+      _performVercelSync();
+    }
+  }
+
+  // ── Periodic 15-Minute Sync ───────────────────────────────────────────────
+  void _startPeriodic15MinSync() {
+    _fifteenMinSyncTimer?.cancel();
+    _fifteenMinSyncTimer = Timer.periodic(const Duration(minutes: 15), (_) {
+      debugPrint('[HealthHub] 15-minute periodic timer — triggering sync');
+      _performVercelSync();
+    });
+  }
+
+  // ── Core Sync Handler (Foreground / 15-Min Timer / Pull-to-Refresh) ───────
+  Future<void> _performVercelSync() async {
+    if (_isSyncing) return;
+    if (mounted) setState(() => _isSyncing = true);
+    try {
+      await _fetchCoreMetrics();
+      final success = await HealthService.instance.syncMetricsToVercel();
+      debugPrint('[HealthHub] Vercel sync result: $success');
+      if (mounted) {
+        setState(() {
+          _isSyncing = false;
+          _lastSyncedAt = DateTime.now();
+        });
+      }
+    } catch (e) {
+      debugPrint('[HealthHub] Sync error: $e');
+      if (mounted) setState(() => _isSyncing = false);
+    }
+  }
+
+  String _formatSyncedTime(DateTime dt) {
+    final hour = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $period';
+  }
+
+  // ── Health permission dialog + core metric fetch ─────────────────────────
+
+  /// Shows a friendly explanation dialog then triggers the OS permission sheet.
+  /// Called once when the Health Hub screen opens for the first time.
+  Future<void> _requestHealthPermissionsWithDialog() async {
+    // Skip if we already have permissions
+    final already = await HealthService.instance.hasPermissions();
+    if (already) {
+      _fetchCoreMetrics();
+      return;
+    }
+
+    if (!mounted) return;
+
+    // Show explanation dialog before the system prompt
+    final proceed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF14B8A6).withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.favorite_rounded,
+                  color: Color(0xFF14B8A6), size: 24),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Health Data Access',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Family Health Connect would like to read the following from your device:',
+              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+            ),
+            SizedBox(height: 16),
+            _PermissionItem(
+              icon: Icons.favorite_rounded,
+              color: Color(0xFFEF4444),
+              label: 'Heart Rate',
+              description: 'Latest BPM reading',
+            ),
+            _PermissionItem(
+              icon: Icons.directions_walk_rounded,
+              color: Color(0xFF22C55E),
+              label: 'Step Count',
+              description: 'Total steps today',
+            ),
+            _PermissionItem(
+              icon: Icons.water_drop_rounded,
+              color: Color(0xFF3B82F6),
+              label: 'Blood Oxygen',
+              description: 'Latest SpO₂ reading',
+            ),
+            _PermissionItem(
+              icon: Icons.bedtime_rounded,
+              color: Color(0xFF8B5CF6),
+              label: 'Sleep',
+              description: 'Hours slept last night',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not Now',
+                style: TextStyle(color: Color(0xFF64748B))),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF14B8A6),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Allow Access',
+                style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (proceed == true) {
+      final granted = await HealthService.instance.requestPermissions();
+      debugPrint('[HealthHub] Permissions granted: $granted');
+      if (granted) _fetchCoreMetrics();
+    }
+  }
+
+  /// Fetches today's four core metrics and updates the Hub summary card.
+  Future<void> _fetchCoreMetrics() async {
+    if (!mounted) return;
+    setState(() => _hubLoading = true);
+    try {
+      final metrics = await HealthService.instance.fetchTodayMetrics();
+      if (mounted) {
+        setState(() {
+          _hubHeartRate   = (metrics['heart_rate']   as num).toDouble();
+          _hubSteps       = (metrics['steps']        as num).toInt();
+          _hubBloodOxygen = (metrics['blood_oxygen'] as num).toDouble();
+          _hubSleepHours  = (metrics['sleep_hours']  as num).toDouble();
+          _hubLoading     = false;
+
+          if (_hubHeartRate > 0) _heartRate = _hubHeartRate.toStringAsFixed(0);
+          if (_hubSteps > 0) _steps = _hubSteps.toString();
+          if (_hubBloodOxygen > 0) _spo2 = _hubBloodOxygen.toStringAsFixed(1);
+          if (_hubSleepHours > 0) _sleep = _hubSleepHours.toStringAsFixed(1);
+        });
+      }
+    } catch (e) {
+      debugPrint('[HealthHub] fetchCoreMetrics error: $e');
+      if (mounted) setState(() => _hubLoading = false);
+    }
   }
 
   Future<void> _loadCachedVitals() async {
@@ -116,36 +315,43 @@ class _HealthScreenState extends State<HealthScreen> {
   }
 
   Future<void> _fetchData() async {
-    final records = await ApiService.getHealthData();
-    final summary = await ApiService.getHealthSummary(range: 'daily');
-    final todaySummary = await ApiService.getTodayHealthSummary();
+    // ── Run all 3 calls in PARALLEL — was sequential (3× slower) ──────────
+    final results = await Future.wait([
+      ApiService.getHealthData(),
+      ApiService.getHealthSummary(range: 'daily'),
+      ApiService.getTodayHealthSummary(),
+    ]);
+
+    final records     = results[0] as List<dynamic>;
+    final summary     = results[1] as Map<String, dynamic>?;
+    final todaySummary = results[2] as Map<String, dynamic>?;
 
     if (mounted) {
       setState(() {
-        _records = records;
+        _records  = records;
         _isLoading = false;
 
         if (todaySummary != null) {
-          _steps = (todaySummary['steps'] ?? '0').toString();
-          _distance = (todaySummary['distance'] ?? '0.0').toString();
-          _heartRate = (todaySummary['heart_rate'] ?? '--').toString();
+          _steps         = (todaySummary['steps']          ?? '0').toString();
+          _distance      = (todaySummary['distance']       ?? '0.0').toString();
+          _heartRate     = (todaySummary['heart_rate']     ?? '--').toString();
           _bloodPressure = (todaySummary['blood_pressure'] ?? '--/--').toString();
         }
 
         if (summary != null) {
-          _calories = (summary['today_calories'] ?? '0').toString();
-          _sleep = (summary['today_sleep'] ?? '--').toString();
-          _spo2 = (summary['latest_spo2'] ?? '--').toString();
+          _calories  = (summary['today_calories'] ?? '0').toString();
+          _sleep     = (summary['today_sleep']    ?? '--').toString();
+          _spo2      = (summary['latest_spo2']    ?? '--').toString();
           _hydration = (summary['today_hydration'] ?? '--').toString();
-          _weight = (summary['latest_weight'] ?? '--').toString();
+          _weight    = (summary['latest_weight']  ?? '--').toString();
 
           final goal = summary['goal'];
           if (goal != null) {
-            _stepsGoal = goal['steps_goal'] ?? 10000;
-            _caloriesGoal = (goal['calories_goal'] ?? 2000.0).toDouble();
+            _stepsGoal     = goal['steps_goal']     ?? 10000;
+            _caloriesGoal  = (goal['calories_goal']  ?? 2000.0).toDouble();
             _hydrationGoal = (goal['hydration_goal'] ?? 2.0).toDouble();
-            _sleepGoal = (goal['sleep_goal'] ?? 8.0).toDouble();
-            _distanceGoal = (goal['distance_goal'] ?? 5.0).toDouble();
+            _sleepGoal     = (goal['sleep_goal']     ?? 8.0).toDouble();
+            _distanceGoal  = (goal['distance_goal']  ?? 5.0).toDouble();
           }
         }
       });
@@ -409,9 +615,9 @@ class _HealthScreenState extends State<HealthScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(dark ? 0.05 : 0.6),
+        color: Colors.white.withValues(alpha: dark ? 0.05 : 0.6),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: TextField(
         controller: controller,
@@ -444,6 +650,18 @@ class _HealthScreenState extends State<HealthScreen> {
       appBar: AppBar(
         title: const Text('Google Fit Sync'),
         actions: [
+          if (_hubLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8.0),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF14B8A6),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.sync_rounded, color: Color(0xFF14B8A6)),
             onPressed: () {
@@ -457,195 +675,244 @@ class _HealthScreenState extends State<HealthScreen> {
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator(color: Color(0xFF14B8A6)))
-        : ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // Emergency Vital Alert
-          if (hasEmergency)
-            Container(
-              margin: const EdgeInsets.only(bottom: 16),
+        : RefreshIndicator(
+            onRefresh: _performVercelSync,
+            color: const Color(0xFF14B8A6),
+            child: ListView(
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: alertColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: alertColor.withOpacity(0.3)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: alertColor, size: 28),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Last Synced Status Label
+                if (_lastSyncedAt != null || _isSyncing)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text('Abnormal Vitals Detected!', 
-                          style: TextStyle(fontWeight: FontWeight.bold, color: alertColor)),
-                        const Text('Please rest and check your notifications or contact your doctor.',
-                          style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        Icon(
+                          _isSyncing ? Icons.sync_rounded : Icons.cloud_done_rounded,
+                          size: 14,
+                          color: const Color(0xFF14B8A6),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _isSyncing
+                              ? 'Syncing metrics to cloud...'
+                              : 'Last synced at ${_formatSyncedTime(_lastSyncedAt!)}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
 
-          // Vitals Grid
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 1.1,
-            children: [
-              _VitalCard(
-                label: 'Heart Rate', 
-                value: _heartRate, 
-                unit: 'bpm',
-                progress: _heartRate != '--' ? (double.tryParse(_heartRate) ?? 0.0) / 100.0 : 0.0,
-                icon: Icons.favorite_rounded, 
-                color: const Color(0xFFEF4444)
-              ),
-              _VitalCard(
-                label: 'Steps Today', 
-                value: _steps, 
-                unit: 'steps',
-                progress: _steps != '--' ? (double.tryParse(_steps) ?? 0.0) / _stepsGoal : 0.0,
-                icon: Icons.directions_walk_rounded, 
-                color: const Color(0xFF14B8A6)
-              ),
-              _VitalCard(
-                label: 'Oxygen (SpO₂)', 
-                value: _spo2, 
-                unit: '%',
-                progress: _spo2 != '--' ? (double.tryParse(_spo2) ?? 0.0) / 100.0 : 0.0,
-                icon: Icons.thermostat_rounded, 
-                color: const Color(0xFF3B82F6)
-              ),
-              _VitalCard(
-                label: 'Sleep Duration', 
-                value: _sleep, 
-                unit: 'hrs',
-                progress: _sleep != '--' ? (double.tryParse(_sleep) ?? 0.0) / _sleepGoal : 0.0,
-                icon: Icons.bedtime_rounded, 
-                color: const Color(0xFF6366F1)
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Secondary Vitals Cards
-          Row(
-            children: [
-              Expanded(
-                child: _buildSecondaryCard(
-                  title: 'Hydration',
-                  value: '$_hydration L',
-                  sub: 'Goal: $_hydrationGoal L',
-                  icon: Icons.local_drink_rounded,
-                  color: Colors.cyan,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildSecondaryCard(
-                  title: 'Calories',
-                  value: '$_calories kcal',
-                  sub: 'Goal: ${_caloriesGoal.toInt()} kcal',
-                  icon: Icons.local_fire_department_rounded,
-                  color: Colors.orange,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _buildSecondaryCard(
-                  title: 'Weight Trends',
-                  value: '$_weight kg',
-                  sub: 'Target stable',
-                  icon: Icons.monitor_weight_rounded,
-                  color: Colors.purple,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildSecondaryCard(
-                  title: 'Distance',
-                  value: '$_distance km',
-                  sub: 'Goal: $_distanceGoal km',
-                  icon: Icons.trending_up_rounded,
-                  color: Colors.pink,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          const Text('Vitals History Logs',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
-              color: Color(0xFF14B8A6))),
-          const SizedBox(height: 12),
-          if (_records.isEmpty)
-             Card(
-               elevation: 0,
-               color: Theme.of(context).cardColor,
-               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-               child: const Padding(
-                 padding: EdgeInsets.all(24.0),
-                 child: Center(
-                   child: Text(
-                     'No health records found in database. Vitals synced from Health Connect or logged manually will appear here.',
-                     textAlign: TextAlign.center,
-                     style: TextStyle(color: Color(0xFF64748B)),
-                   ),
-                 ),
-               ),
-             )
-          else
-            ..._records.map((record) => Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
-                  blurRadius: 8)],
-              ),
-              child: Row(
-                children: [
+                // Emergency Vital Alert
+                if (hasEmergency)
                   Container(
-                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF14B8A6).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
+                      color: alertColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: alertColor.withValues(alpha: 0.3)),
                     ),
-                    child: const Icon(Icons.medical_services_rounded,
-                      color: Color(0xFF14B8A6), size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
                       children: [
-                        Text((record['title'] ?? record['record_type'] ?? 'Health Log').toString(),
-                          style: TextStyle(fontWeight: FontWeight.bold,
-                            color: isDark ? Colors.white : const Color(0xFF0F172A))),
-                        Text('${record['recorded_date']?.toString() ?? 'Recent'} • ${record['notes'] ?? 'No notes'}',
-                          style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Icon(Icons.warning_amber_rounded, color: alertColor, size: 28),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Abnormal Vitals Detected!', 
+                                style: TextStyle(fontWeight: FontWeight.bold, color: alertColor)),
+                              const Text('Please rest and check your notifications or contact your doctor.',
+                                style: TextStyle(fontSize: 12, color: Colors.grey)),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const Icon(Icons.chevron_right_rounded, color: Color(0xFF94A3B8)),
-                ],
-              ),
-            )),
-          const SizedBox(height: 80),
-        ],
-      ),
+
+                // Vitals Grid
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: 1.1,
+                  children: [
+                    _VitalCard(
+                      label: 'Heart Rate', 
+                      value: _heartRate, 
+                      unit: 'bpm',
+                      progress: _heartRate != '--' ? (double.tryParse(_heartRate) ?? 0.0) / 100.0 : 0.0,
+                      icon: Icons.favorite_rounded, 
+                      color: const Color(0xFFEF4444),
+                      isSyncing: _isSyncing,
+                    ),
+                    _VitalCard(
+                      label: 'Steps Today', 
+                      value: _steps, 
+                      unit: 'steps',
+                      progress: _steps != '--' ? (double.tryParse(_steps) ?? 0.0) / _stepsGoal : 0.0,
+                      icon: Icons.directions_walk_rounded, 
+                      color: const Color(0xFF14B8A6),
+                      isSyncing: _isSyncing,
+                    ),
+                    _VitalCard(
+                      label: 'Oxygen (SpO₂)', 
+                      value: _spo2, 
+                      unit: '%',
+                      progress: _spo2 != '--' ? (double.tryParse(_spo2) ?? 0.0) / 100.0 : 0.0,
+                      icon: Icons.thermostat_rounded, 
+                      color: const Color(0xFF3B82F6),
+                      isSyncing: _isSyncing,
+                    ),
+                    _VitalCard(
+                      label: 'Sleep Duration', 
+                      value: _sleep, 
+                      unit: 'hrs',
+                      progress: _sleep != '--' ? (double.tryParse(_sleep) ?? 0.0) / _sleepGoal : 0.0,
+                      icon: Icons.bedtime_rounded, 
+                      color: const Color(0xFF6366F1),
+                      isSyncing: _isSyncing,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                // Secondary Vitals Cards
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSecondaryCard(
+                        title: 'Hydration',
+                        value: '$_hydration L',
+                        sub: 'Goal: $_hydrationGoal L',
+                        icon: Icons.local_drink_rounded,
+                        color: Colors.cyan,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSecondaryCard(
+                        title: 'Calories',
+                        value: '$_calories kcal',
+                        sub: 'Goal: ${_caloriesGoal.toInt()} kcal',
+                        icon: Icons.local_fire_department_rounded,
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSecondaryCard(
+                        title: 'Weight Trends',
+                        value: '$_weight kg',
+                        sub: 'Target stable',
+                        icon: Icons.monitor_weight_rounded,
+                        color: Colors.purple,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSecondaryCard(
+                        title: 'Blood Pressure',
+                        value: _bloodPressure,
+                        sub: 'Target: 120/80',
+                        icon: Icons.favorite_border_rounded,
+                        color: Colors.redAccent,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSecondaryCard(
+                        title: 'Distance',
+                        value: '$_distance km',
+                        sub: 'Goal: $_distanceGoal km',
+                        icon: Icons.trending_up_rounded,
+                        color: Colors.pink,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                const Text('Vitals History Logs',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
+                    color: Color(0xFF14B8A6))),
+                const SizedBox(height: 12),
+                if (_records.isEmpty)
+                   Card(
+                     elevation: 0,
+                     color: Theme.of(context).cardColor,
+                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                     child: const Padding(
+                       padding: EdgeInsets.all(24.0),
+                       child: Center(
+                         child: Text(
+                           'No health records found in database. Vitals synced from Health Connect or logged manually will appear here.',
+                           textAlign: TextAlign.center,
+                           style: TextStyle(color: Color(0xFF64748B)),
+                         ),
+                       ),
+                     ),
+                   )
+                else
+                  ..._records.map((record) => Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 8)],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF14B8A6).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.medical_services_rounded,
+                            color: Color(0xFF14B8A6), size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text((record['title'] ?? record['record_type'] ?? 'Health Log').toString(),
+                                style: TextStyle(fontWeight: FontWeight.bold,
+                                  color: isDark ? Colors.white : const Color(0xFF0F172A))),
+                              Text('${record['recorded_date']?.toString() ?? 'Recent'} • ${record['notes'] ?? 'No notes'}',
+                                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right_rounded, color: Color(0xFF94A3B8)),
+                      ],
+                    ),
+                  )),
+                const SizedBox(height: 80),
+              ],
+            ),
+          ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddRecordBottomSheet,
         backgroundColor: const Color(0xFF14B8A6),
@@ -669,14 +936,14 @@ class _HealthScreenState extends State<HealthScreen> {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(icon, color: color, size: 20),
@@ -705,6 +972,7 @@ class _VitalCard extends StatelessWidget {
   final double progress;
   final IconData icon;
   final Color color;
+  final bool isSyncing;
 
   const _VitalCard({
     required this.label, 
@@ -712,7 +980,8 @@ class _VitalCard extends StatelessWidget {
     required this.unit, 
     required this.progress, 
     required this.icon, 
-    required this.color
+    required this.color,
+    this.isSyncing = false,
   });
 
   @override
@@ -723,7 +992,7 @@ class _VitalCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -735,12 +1004,17 @@ class _VitalCard extends StatelessWidget {
               SizedBox(
                 width: 24,
                 height: 24,
-                child: CircularProgressIndicator(
-                  value: progress,
-                  strokeWidth: 3,
-                  backgroundColor: Colors.grey.withOpacity(0.2),
-                  color: color,
-                ),
+                child: isSyncing
+                    ? const CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: Color(0xFF14B8A6),
+                      )
+                    : CircularProgressIndicator(
+                        value: progress,
+                        strokeWidth: 3,
+                        backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                        color: color,
+                      ),
               ),
             ],
           ),
@@ -748,6 +1022,64 @@ class _VitalCard extends StatelessWidget {
           Text(value, style: TextStyle(fontSize: 20,
             fontWeight: FontWeight.bold, color: isDark ? Colors.white : const Color(0xFF0F172A))),
           Text('$unit • $label', style: TextStyle(color: Colors.grey[500], fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── _PermissionItem ───────────────────────────────────────────────────────────
+// Small row widget used inside the health permission explanation dialog.
+// Shows an icon + label + description for a single health data type.
+class _PermissionItem extends StatelessWidget {
+  const _PermissionItem({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.description,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                description,
+                style: const TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

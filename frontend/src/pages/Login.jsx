@@ -6,10 +6,10 @@ import { signInWithGoogle } from '../utils/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => localStorage.getItem('remembered_email') || '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
+  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem('remembered_email'));
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
@@ -23,7 +23,9 @@ export default function Login() {
   useEffect(() => {
     const reason = sessionStorage.getItem('auth_redirect_reason');
     if (reason === 'session_expired') {
-      setSessionBanner('session_expired');
+      Promise.resolve().then(() => {
+        setSessionBanner('session_expired');
+      });
       sessionStorage.removeItem('auth_redirect_reason');
     }
   }, []);
@@ -62,12 +64,19 @@ export default function Login() {
     try {
       const user = await signInWithGoogle();
       const idToken = await user.getIdToken();
-      localStorage.setItem('access_token', idToken);
-      localStorage.setItem('refresh_token', idToken);
-      localStorage.setItem('username', user.displayName || user.email?.split('@')[0] || 'User');
-      localStorage.setItem('user_id', user.uid);
-      localStorage.setItem('auth_provider', 'google');
-      navigate('/');
+      const res = await api.post('/users/google-login/', {
+        email: user.email,
+        username: user.displayName || user.email?.split('@')[0] || 'User',
+        id_token: idToken,
+      });
+
+      if (res.data && res.data.access) {
+        localStorage.setItem('auth_provider', 'google');
+        await login(res.data);
+        navigate('/');
+      } else {
+        throw new Error('Backend failed to return valid authentication tokens');
+      }
     } catch (err) {
       console.error(err);
       setError(`Google Sign-In failed: ${err.message || 'Unknown error'}`);
@@ -134,14 +143,7 @@ export default function Login() {
     }
   };
 
-  // Pre-fill remembered email
-  useEffect(() => {
-    const remembered = localStorage.getItem('remembered_email');
-    if (remembered) {
-      setEmail(remembered);
-      setRememberMe(true);
-    }
-  }, []);
+
 
   return (
     <div className="min-h-screen bg-navy-900 flex flex-col md:items-center md:justify-center p-4 md:p-6 relative overflow-hidden">

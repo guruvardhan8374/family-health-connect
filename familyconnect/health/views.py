@@ -11,6 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from users.models import CustomUser
 from .models import HealthSnapshot, HealthGoal, HealthMetric, HealthAlert
 from .serializers import (
     HealthSnapshotSerializer, HealthGoalSerializer,
@@ -491,3 +492,161 @@ class HealthSummaryTodayView(APIView):
             'blood_pressure': blood_pressure,
             'heart_rate': int(latest_hr) if latest_hr else None
         }, status=status.HTTP_200_OK)
+
+
+class HealthSyncAPIView(APIView):
+    """
+    API endpoint for Health Sync (POST & GET).
+    POST: accepts { userId, heartRate, steps, spo2, sleepHours } and upserts today's HealthSnapshot/HealthMetric.
+    GET: accepts ?userId=... and returns the latest metrics for that user.
+    """
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request):
+        data = request.data
+        user_id = data.get('userId') if data.get('userId') is not None else data.get('user_id')
+        if not user_id:
+            return Response({'error': 'userId is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except (CustomUser.DoesNotExist, ValueError):
+            return Response({'error': f'User with ID {user_id} not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        heart_rate  = data.get('heartRate')  if data.get('heartRate')  is not None else data.get('heart_rate')
+        steps       = data.get('steps')
+        spo2        = data.get('spo2')       if data.get('spo2')       is not None else data.get('blood_oxygen')
+        sleep_hours = data.get('sleepHours') if data.get('sleepHours') is not None else data.get('sleep_hours')
+
+        today = timezone.localdate()
+        start_of_day = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
+        end_of_day   = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.max.time()))
+
+        snapshot = HealthSnapshot.objects.filter(
+            user=user,
+            recorded_at__range=(start_of_day, end_of_day)
+        ).first()
+
+        if not snapshot:
+            snapshot = HealthSnapshot.objects.create(
+                user=user,
+                source='HEALTH_CONNECT',
+                heart_rate=float(heart_rate) if heart_rate is not None else None,
+                steps=int(steps) if steps is not None else None,
+                spo2=float(spo2) if spo2 is not None else None,
+                sleep_hours=float(sleep_hours) if sleep_hours is not None else None,
+            )
+        else:
+            if heart_rate is not None:  snapshot.heart_rate = float(heart_rate)
+            if steps is not None:       snapshot.steps = int(steps)
+            if spo2 is not None:        snapshot.spo2 = float(spo2)
+            if sleep_hours is not None: snapshot.sleep_hours = float(sleep_hours)
+            snapshot.recorded_at = timezone.now()
+            snapshot.save()
+
+        _check_and_create_alerts(snapshot)
+
+        return Response({
+            'message': 'Health metrics synced successfully',
+            'userId': user.id,
+            'heartRate': snapshot.heart_rate or 0,
+            'steps': snapshot.steps or 0,
+            'spo2': snapshot.spo2 or 0,
+            'sleepHours': snapshot.sleep_hours or 0,
+            'updatedAt': snapshot.recorded_at.isoformat(),
+        }, status=status.HTTP_200_OK)
+
+    def get(self, request):
+        user_id = request.query_params.get('userId') or request.query_params.get('user_id')
+        if not user_id:
+            return Response({'error': 'userId query parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_range = (request.query_params.get('range') or request.query_params.get('timeRange') or 'day').lower()
+        if raw_range.startswith('week'):
+            range_type = 'week'
+            days = 7
+        elif raw_range.startswith('month'):
+            range_type = 'month'
+            days = 30
+        else:
+            range_type = 'day'
+            days = 1
+
+        now = timezone.now()
+
+        if range_type == 'day':
+            snapshot = HealthSnapshot.objects.filter(user_id=user_id).order_by('-recorded_at').first()
+            if not snapshot:
+                return Response({
+                    'userId': int(user_id) if str(user_id).isdigit() else user_id,
+                    'range': 'day',
+                    'heartRate': 0,
+                    'steps': 0,
+                    'spo2': 0,
+                    'sleepHours': 0,
+                    'updatedAt': None,
+                }, status=status.HTTP_200_OK)
+
+            return Response({
+                'userId': snapshot.user_id,
+                'range': 'day',
+                'heartRate': round(snapshot.heart_rate or 0),
+                'steps': snapshot.steps or 0,
+                'spo2': snapshot.spo2 or 0,
+                'sleepHours': snapshot.sleep_hours or 0,
+                'updatedAt': snapshot.recorded_at.isoformat(),
+            }, status=status.HTTP_200_OK)
+
+        # Range is 'week' (7 days) or 'month' (30 days)
+        cutoff = now - timedelta(days=days)
+        snapshots = HealthSnapshot.objects.filter(user_id=user_id, recorded_at__gte=cutoff)
+
+        if not snapshots.exists():
+            snapshot = HealthSnapshot.objects.filter(user_id=user_id).order_by('-recorded_at').first()
+            if not snapshot:
+                return Response({
+                    'userId': int(user_id) if str(user_id).isdigit() else user_id,
+                    'range': range_type,
+                    'heartRate': 0,
+                    'steps': 0,
+                    'spo2': 0,
+                    'sleepHours': 0,
+                    'updatedAt': None,
+                }, status=status.HTTP_200_OK)
+
+            return Response({
+                'userId': snapshot.user_id,
+                'range': range_type,
+                'heartRate': round(snapshot.heart_rate or 0),
+                'steps': snapshot.steps or 0,
+                'spo2': snapshot.spo2 or 0,
+                'sleepHours': round((snapshot.sleep_hours or 0) / days, 1),
+                'updatedAt': snapshot.recorded_at.isoformat(),
+            }, status=status.HTTP_200_OK)
+
+        aggs = snapshots.aggregate(
+            total_steps=Sum('steps'),
+            avg_hr=Avg('heart_rate'),
+            avg_spo2=Avg('spo2'),
+            total_sleep=Sum('sleep_hours'),
+            latest_updated=Max('recorded_at'),
+        )
+
+        total_steps = aggs['total_steps'] or 0
+        avg_hr = round(aggs['avg_hr']) if aggs['avg_hr'] else 0
+        avg_spo2 = round(aggs['avg_spo2'], 1) if aggs['avg_spo2'] else 0
+        total_sleep = aggs['total_sleep'] or 0.0
+        nightly_avg_sleep = round(total_sleep / days, 1)
+
+        latest_updated = aggs['latest_updated']
+
+        return Response({
+            'userId': int(user_id) if str(user_id).isdigit() else user_id,
+            'range': range_type,
+            'heartRate': avg_hr,
+            'steps': total_steps,
+            'spo2': avg_spo2,
+            'sleepHours': nightly_avg_sleep,
+            'updatedAt': latest_updated.isoformat() if latest_updated else None,
+        }, status=status.HTTP_200_OK)
+

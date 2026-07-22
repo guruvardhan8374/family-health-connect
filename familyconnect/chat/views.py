@@ -27,7 +27,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         # Annotate with last message timestamp to sort active chats to top
         return Conversation.objects.filter(
             participants=self.request.user
-        ).annotate(
+        ).select_related('family_group').prefetch_related('participants', 'userconversation_set__user').annotate(
             last_message_time=Max('messages__timestamp')
         ).order_by('-last_message_time', '-created_at')
 

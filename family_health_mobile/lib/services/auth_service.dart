@@ -20,6 +20,9 @@ class AuthService {
     return _prefs!;
   }
 
+  // ── Auth state notifier for reactive UI navigation (Login vs MainShell) ──
+  static final ValueNotifier<bool> isLoggedInNotifier = ValueNotifier<bool>(false);
+
   // ── In-memory cache for the most-accessed fields (zero I/O on hot path) ──
   static String? _cachedToken;
   static String? _cachedUsername;
@@ -28,10 +31,16 @@ class AuthService {
   static String? _cachedRole;
 
   static Future<bool> isLoggedIn() async {
-    if (_cachedToken != null) return _cachedToken!.isNotEmpty;
+    if (_cachedToken != null) {
+      final valid = _cachedToken!.isNotEmpty;
+      isLoggedInNotifier.value = valid;
+      return valid;
+    }
     final prefs = await _getPrefs();
     _cachedToken = prefs.getString(_tokenKey);
-    return _cachedToken != null && _cachedToken!.isNotEmpty;
+    final valid = _cachedToken != null && _cachedToken!.isNotEmpty;
+    isLoggedInNotifier.value = valid;
+    return valid;
   }
 
   /// Save JWT token + basic identity fields in one prefs instance.
@@ -55,6 +64,8 @@ class AuthService {
       prefs.setString(_authProviderKey, authProvider),
       if (refreshToken != null) prefs.setString(_refreshKey, refreshToken),
     ]);
+
+    isLoggedInNotifier.value = true;
   }
 
   /// Save full profile from the login token response — no extra API call needed.
@@ -83,6 +94,21 @@ class AuthService {
     final prefs = await _getPrefs();
     _cachedToken = prefs.getString(_tokenKey);
     return _cachedToken;
+  }
+
+  static Future<String?> getRefreshToken() async {
+    final prefs = await _getPrefs();
+    return prefs.getString(_refreshKey);
+  }
+
+  /// Atomically updates access token (and optional rotated refresh token) in memory and disk
+  static Future<void> updateAccessToken(String newToken, {String? newRefreshToken}) async {
+    _cachedToken = newToken;
+    final prefs = await _getPrefs();
+    await prefs.setString(_tokenKey, newToken);
+    if (newRefreshToken != null && newRefreshToken.isNotEmpty) {
+      await prefs.setString(_refreshKey, newRefreshToken);
+    }
   }
 
   static Future<String> getUsername() async {
@@ -133,6 +159,7 @@ class AuthService {
 
     final prefs = await _getPrefs();
     await prefs.clear();
+    isLoggedInNotifier.value = false;
   }
 }
 

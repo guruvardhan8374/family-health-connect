@@ -139,10 +139,15 @@ export function SyncProvider({ children }) {
  * @param {Array} deps        extra deps for useCallback
  */
 export function useSyncEvent(eventType, handler, deps = []) {
-  const stableHandler = useCallback(handler, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  const handlerRef = useRef(handler);
   useEffect(() => {
-    return bus.on(eventType, stableHandler);
-  }, [eventType, stableHandler]);
+    handlerRef.current = handler;
+  }, [handler]);
+
+  useEffect(() => {
+    const subHandler = (...args) => handlerRef.current(...args);
+    return bus.on(eventType, subHandler);
+  }, [eventType]);
 }
 
 export const useSync = () => {

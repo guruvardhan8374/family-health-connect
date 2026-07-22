@@ -78,9 +78,13 @@ class _LoginScreenState extends State<LoginScreen> {
     } else {
       final errorType = result?['error'] ?? 'network_error';
       setState(() {
-        _error = (errorType == 'timeout' || errorType == 'network_error')
-            ? 'Connection timed out. Please check your internet and try again.'
-            : 'Invalid username or password. Please try again.';
+        if (errorType == 'timeout' || errorType == 'network_error') {
+          _error = 'Connection timed out. Please check your internet and try again.';
+        } else if (errorType != 'unauthorized') {
+          _error = errorType;
+        } else {
+          _error = 'Invalid username or password. Please try again.';
+        }
         _isLoading = false;
       });
     }

@@ -198,7 +198,6 @@ class AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<AuthGate> {
   bool _isLoading = true;
-  bool _isLoggedIn = false;
 
   @override
   void initState() {
@@ -207,17 +206,12 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<void> _checkAuth() async {
-    // ── isLoggedIn() reads from in-memory cache or local SharedPreferences ──
-    // ── No network calls here — auth gate resolves in < 50ms ──────────────
     final loggedIn = await AuthService.isLoggedIn();
     if (loggedIn) {
-      // Load theme from local prefs only (ThemeController caches locally)
       ThemeController.instance.loadThemeFromCache();
-      // WebSocket starts non-blocking — UI doesn't wait for it
       SyncService.instance.connect();
     }
     setState(() {
-      _isLoggedIn = loggedIn;
       _isLoading = false;
     });
   }
@@ -232,7 +226,12 @@ class _AuthGateState extends State<AuthGate> {
         ),
       );
     }
-    return _isLoggedIn ? const MainShell() : const LoginScreen();
+    return ValueListenableBuilder<bool>(
+      valueListenable: AuthService.isLoggedInNotifier,
+      builder: (context, isLoggedIn, child) {
+        return isLoggedIn ? const MainShell() : const LoginScreen();
+      },
+    );
   }
 }
 
@@ -264,7 +263,10 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      body: _screens[_currentIndex],
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _screens,
+      ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: Colors.white,

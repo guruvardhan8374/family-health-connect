@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
 import api from '../utils/api';
 import { useSyncEvent } from '../contexts/SyncContext';
 import useHealthWebSocket from '../hooks/useHealthWebSocket';
@@ -7,7 +8,7 @@ import {
   Activity, Heart, Droplets, Moon, Flame, Wind, 
   Brain, Zap, Plus, ArrowUpRight, ArrowDownRight,
   ChevronRight, Calendar, RefreshCw, AlertTriangle, User,
-  PlusCircle
+  PlusCircle, Clock
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, 
@@ -94,8 +95,63 @@ export default function HealthHub() {
     return () => clearInterval(interval);
   }, [fetchTodaySummary]);
 
-  // Real-time synchronization
+  // ── GET /api/health-sync?userId=...&range=... integration ─────────────────
   const currentUserId = parseInt(localStorage.getItem('user_id') || '0');
+  const [syncedMetrics, setSyncedMetrics] = useState(null);
+  const [syncLoading, setSyncLoading] = useState(true);
+
+  const rangeParam = timeRange === 'Weekly' ? 'week' : (timeRange === 'Monthly' ? 'month' : 'day');
+
+  const fetchSyncedMetrics = useCallback(async () => {
+    const targetUserId = selectedMemberId || currentUserId;
+    if (!targetUserId) {
+      setSyncLoading(false);
+      return;
+    }
+
+    try {
+      let res;
+      try {
+        // Direct relative request to /api/health-sync (Vercel Serverless Function / local proxy)
+        res = await axios.get(`/api/health-sync?userId=${targetUserId}&range=${rangeParam}`);
+      } catch {
+        // Fallback to configured api client (/api/v1/health-sync or Django API)
+        res = await api.get('/health-sync', { params: { userId: targetUserId, range: rangeParam } });
+      }
+
+      const payload = res.data?.data || res.data;
+      if (payload) {
+        setSyncedMetrics({
+          heartRate: payload.heartRate ?? payload.heart_rate ?? '--',
+          steps: payload.steps ?? 0,
+          spo2: payload.spo2 ?? payload.blood_oxygen ?? '--',
+          sleepHours: payload.sleepHours ?? payload.sleep_hours ?? payload.sleep ?? '--',
+          updatedAt: payload.updatedAt ?? payload.updated_at ?? null,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch health sync metrics:', err);
+    } finally {
+      setSyncLoading(false);
+    }
+  }, [selectedMemberId, currentUserId, rangeParam]);
+
+  // Refetch and poll GET /api/health-sync every 60 seconds (or when timeRange/user changes)
+  useEffect(() => {
+    setSyncLoading(true);
+    fetchSyncedMetrics();
+    const interval = setInterval(fetchSyncedMetrics, 60000);
+    return () => clearInterval(interval);
+  }, [fetchSyncedMetrics]);
+
+  // Returns true if updatedAt is missing or older than 2 hours (2 * 60 * 60 * 1000 ms)
+  const isStaleData = (updatedAt) => {
+    if (!updatedAt) return true;
+    const updateTime = new Date(updatedAt).getTime();
+    if (isNaN(updateTime)) return true;
+    const twoHoursMs = 2 * 60 * 60 * 1000;
+    return (Date.now() - updateTime) > twoHoursMs;
+  };
 
   const handleVitalsUpdate = useCallback((snapshot) => {
     if (!snapshot) return;
@@ -202,7 +258,6 @@ export default function HealthHub() {
 
   // Compute selected member vitals
   const displayVitals = selectedMemberData?.latest_snapshot || {};
-  const currentUserId = parseInt(localStorage.getItem('user_id') || '0');
   const isSelf = selectedMemberId === currentUserId;
 
   // Use summaryData/todaySummary for self, otherwise use family snapshot metrics
@@ -342,20 +397,48 @@ export default function HealthHub() {
             <div className="p-3 rounded-2xl bg-red-500/10 text-red-500 w-fit group-hover:scale-110 transition-transform">
               <Heart className="w-6 h-6" />
             </div>
-            <p className="text-navy-500 text-sm font-medium">Heart Rate</p>
-            <div className="flex items-baseline space-x-1">
-              <h3 className="text-2xl font-bold text-navy-900">{activeVitals.heartRate}</h3>
-              <span className="text-navy-400 text-sm font-medium">bpm</span>
-            </div>
+            <p className="text-navy-500 text-sm font-medium">
+              {timeRange === 'Daily' ? 'Heart Rate' : `${timeRange} Avg Heart Rate`}
+            </p>
+            {syncLoading ? (
+              <div className="h-8 w-24 bg-slate-200/80 rounded-xl animate-pulse my-1" />
+            ) : (
+              <div className="flex flex-col space-y-1">
+                <div className="flex items-baseline space-x-1">
+                  <h3 className="text-2xl font-bold text-navy-900">
+                    {(syncedMetrics?.heartRate !== undefined && syncedMetrics?.heartRate !== '--' && syncedMetrics?.heartRate !== 0)
+                      ? syncedMetrics.heartRate
+                      : activeVitals.heartRate}
+                  </h3>
+                  <span className="text-navy-400 text-sm font-medium">
+                    {timeRange === 'Daily' ? 'bpm' : 'bpm (avg)'}
+                  </span>
+                </div>
+                {isStaleData(syncedMetrics?.updatedAt) && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-600 border border-amber-500/20 w-fit" title="Data was synced more than 2 hours ago">
+                    <Clock className="w-3 h-3" />
+                    stale data
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <CircularProgress 
-            value={activeVitals.heartRate !== '--' ? Math.min((activeVitals.heartRate / 100) * 100, 100) : 0} 
-            size={72} 
-            stroke={6}
-            color="#ef4444"
-            label={activeVitals.heartRate.toString()}
-            sublabel="bpm"
-          />
+          {syncLoading ? (
+            <div className="w-[72px] h-[72px] rounded-full bg-slate-200/80 animate-pulse" />
+          ) : (
+            <CircularProgress 
+              value={
+                (syncedMetrics?.heartRate && syncedMetrics.heartRate !== '--' && syncedMetrics.heartRate !== 0)
+                  ? Math.min((syncedMetrics.heartRate / 100) * 100, 100)
+                  : (activeVitals.heartRate !== '--' ? Math.min((activeVitals.heartRate / 100) * 100, 100) : 0)
+              } 
+              size={72} 
+              stroke={6}
+              color="#ef4444"
+              label={((syncedMetrics?.heartRate && syncedMetrics.heartRate !== '--' && syncedMetrics.heartRate !== 0) ? syncedMetrics.heartRate : activeVitals.heartRate).toString()}
+              sublabel={timeRange === 'Daily' ? 'bpm' : 'avg'}
+            />
+          )}
         </div>
 
         {/* Steps Card */}
@@ -364,19 +447,47 @@ export default function HealthHub() {
             <div className="p-3 rounded-2xl bg-brand-500/10 text-brand-500 w-fit group-hover:scale-110 transition-transform">
               <Activity className="w-6 h-6" />
             </div>
-            <p className="text-navy-500 text-sm font-medium">Daily Steps</p>
-            <div className="flex items-baseline space-x-1">
-              <h3 className="text-2xl font-bold text-navy-900">{activeVitals.steps.toLocaleString()}</h3>
-              <span className="text-navy-400 text-sm font-medium">/ {stepsGoal.toLocaleString()}</span>
-            </div>
+            <p className="text-navy-500 text-sm font-medium">
+              {timeRange === 'Daily' ? 'Daily Steps' : `${timeRange} Total Steps`}
+            </p>
+            {syncLoading ? (
+              <div className="h-8 w-28 bg-slate-200/80 rounded-xl animate-pulse my-1" />
+            ) : (
+              <div className="flex flex-col space-y-1">
+                <div className="flex items-baseline space-x-1">
+                  <h3 className="text-2xl font-bold text-navy-900">
+                    {((syncedMetrics?.steps !== undefined && syncedMetrics?.steps !== 0)
+                      ? syncedMetrics.steps
+                      : activeVitals.steps).toLocaleString()}
+                  </h3>
+                  <span className="text-navy-400 text-sm font-medium">
+                    {timeRange === 'Daily' ? `/ ${stepsGoal.toLocaleString()}` : `${timeRange === 'Weekly' ? '7-day total' : '30-day total'}`}
+                  </span>
+                </div>
+                {isStaleData(syncedMetrics?.updatedAt) && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-600 border border-amber-500/20 w-fit" title="Data was synced more than 2 hours ago">
+                    <Clock className="w-3 h-3" />
+                    stale data
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <CircularProgress 
-            value={stepsGoal > 0 ? Math.min((activeVitals.steps / stepsGoal) * 100, 100) : 0} 
-            size={72} 
-            stroke={6}
-            color="#14b8a6"
-            label={Math.round((activeVitals.steps / stepsGoal) * 100 || 0).toString() + '%'}
-          />
+          {syncLoading ? (
+            <div className="w-[72px] h-[72px] rounded-full bg-slate-200/80 animate-pulse" />
+          ) : (
+            <CircularProgress 
+              value={
+                stepsGoal > 0 
+                  ? Math.min((((syncedMetrics?.steps !== undefined && syncedMetrics?.steps !== 0) ? syncedMetrics.steps : activeVitals.steps) / (timeRange === 'Daily' ? stepsGoal : (timeRange === 'Weekly' ? stepsGoal * 7 : stepsGoal * 30))) * 100, 100) 
+                  : 0
+              } 
+              size={72} 
+              stroke={6}
+              color="#14b8a6"
+              label={Math.round((((syncedMetrics?.steps !== undefined && syncedMetrics?.steps !== 0) ? syncedMetrics.steps : activeVitals.steps) / (timeRange === 'Daily' ? stepsGoal : (timeRange === 'Weekly' ? stepsGoal * 7 : stepsGoal * 30))) * 100 || 0).toString() + '%'}
+            />
+          )}
         </div>
 
         {/* Blood Oxygen */}
@@ -385,19 +496,47 @@ export default function HealthHub() {
             <div className="p-3 rounded-2xl bg-blue-500/10 text-blue-500 w-fit group-hover:scale-110 transition-transform">
               <Wind className="w-6 h-6" />
             </div>
-            <p className="text-navy-500 text-sm font-medium">Oxygen (SpO₂)</p>
-            <div className="flex items-baseline space-x-1">
-              <h3 className="text-2xl font-bold text-navy-900">{activeVitals.oxygen}</h3>
-              <span className="text-navy-400 text-sm font-medium">%</span>
-            </div>
+            <p className="text-navy-500 text-sm font-medium">
+              {timeRange === 'Daily' ? 'Oxygen (SpO₂)' : `${timeRange} Avg SpO₂`}
+            </p>
+            {syncLoading ? (
+              <div className="h-8 w-20 bg-slate-200/80 rounded-xl animate-pulse my-1" />
+            ) : (
+              <div className="flex flex-col space-y-1">
+                <div className="flex items-baseline space-x-1">
+                  <h3 className="text-2xl font-bold text-navy-900">
+                    {(syncedMetrics?.spo2 !== undefined && syncedMetrics?.spo2 !== '--' && syncedMetrics?.spo2 !== 0)
+                      ? syncedMetrics.spo2
+                      : activeVitals.oxygen}
+                  </h3>
+                  <span className="text-navy-400 text-sm font-medium">
+                    {timeRange === 'Daily' ? '%' : '% (avg)'}
+                  </span>
+                </div>
+                {isStaleData(syncedMetrics?.updatedAt) && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-600 border border-amber-500/20 w-fit" title="Data was synced more than 2 hours ago">
+                    <Clock className="w-3 h-3" />
+                    stale data
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <CircularProgress 
-            value={activeVitals.oxygen !== '--' ? activeVitals.oxygen : 0} 
-            size={72} 
-            stroke={6}
-            color="#3b82f6"
-            label={activeVitals.oxygen.toString() + '%'}
-          />
+          {syncLoading ? (
+            <div className="w-[72px] h-[72px] rounded-full bg-slate-200/80 animate-pulse" />
+          ) : (
+            <CircularProgress 
+              value={
+                (syncedMetrics?.spo2 && syncedMetrics.spo2 !== '--' && syncedMetrics.spo2 !== 0)
+                  ? syncedMetrics.spo2
+                  : (activeVitals.oxygen !== '--' ? activeVitals.oxygen : 0)
+              } 
+              size={72} 
+              stroke={6}
+              color="#3b82f6"
+              label={((syncedMetrics?.spo2 && syncedMetrics.spo2 !== '--' && syncedMetrics.spo2 !== 0) ? syncedMetrics.spo2 : activeVitals.oxygen).toString() + '%'}
+            />
+          )}
         </div>
 
         {/* Sleep Duration */}
@@ -406,19 +545,47 @@ export default function HealthHub() {
             <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-500 w-fit group-hover:scale-110 transition-transform">
               <Moon className="w-6 h-6" />
             </div>
-            <p className="text-navy-500 text-sm font-medium">Sleep hours</p>
-            <div className="flex items-baseline space-x-1">
-              <h3 className="text-2xl font-bold text-navy-900">{activeVitals.sleep}</h3>
-              <span className="text-navy-400 text-sm font-medium">hrs</span>
-            </div>
+            <p className="text-navy-500 text-sm font-medium">
+              {timeRange === 'Daily' ? 'Sleep hours' : 'Nightly Avg Sleep'}
+            </p>
+            {syncLoading ? (
+              <div className="h-8 w-20 bg-slate-200/80 rounded-xl animate-pulse my-1" />
+            ) : (
+              <div className="flex flex-col space-y-1">
+                <div className="flex items-baseline space-x-1">
+                  <h3 className="text-2xl font-bold text-navy-900">
+                    {(syncedMetrics?.sleepHours !== undefined && syncedMetrics?.sleepHours !== '--' && syncedMetrics?.sleepHours !== 0)
+                      ? syncedMetrics.sleepHours
+                      : activeVitals.sleep}
+                  </h3>
+                  <span className="text-navy-400 text-sm font-medium">
+                    {timeRange === 'Daily' ? 'hrs' : 'hrs/night'}
+                  </span>
+                </div>
+                {isStaleData(syncedMetrics?.updatedAt) && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-600 border border-amber-500/20 w-fit" title="Data was synced more than 2 hours ago">
+                    <Clock className="w-3 h-3" />
+                    stale data
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <CircularProgress 
-            value={sleepGoal > 0 && activeVitals.sleep !== '--' ? Math.min((activeVitals.sleep / sleepGoal) * 100, 100) : 0} 
-            size={72} 
-            stroke={6}
-            color="#6366f1"
-            label={activeVitals.sleep.toString()}
-          />
+          {syncLoading ? (
+            <div className="w-[72px] h-[72px] rounded-full bg-slate-200/80 animate-pulse" />
+          ) : (
+            <CircularProgress 
+              value={
+                sleepGoal > 0 
+                  ? Math.min((((syncedMetrics?.sleepHours && syncedMetrics.sleepHours !== '--' && syncedMetrics.sleepHours !== 0) ? syncedMetrics.sleepHours : activeVitals.sleep) / sleepGoal) * 100, 100) 
+                  : 0
+              } 
+              size={72} 
+              stroke={6}
+              color="#6366f1"
+              label={((syncedMetrics?.sleepHours && syncedMetrics.sleepHours !== '--' && syncedMetrics.sleepHours !== 0) ? syncedMetrics.sleepHours : activeVitals.sleep).toString()}
+            />
+          )}
         </div>
       </div>
 

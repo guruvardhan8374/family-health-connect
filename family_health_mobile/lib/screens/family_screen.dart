@@ -35,10 +35,10 @@ class _FamilyScreenState extends State<FamilyScreen> {
     super.dispose();
   }
 
-  Future<void> _fetchMembers() async {
+  Future<void> _fetchMembers({bool forceRefresh = false}) async {
     final results = await Future.wait([
-      ApiService.getFamilyMembers(),
-      ApiService.getFamilyGroups(),
+      ApiService.getFamilyMembers(forceRefresh: forceRefresh),
+      ApiService.getFamilyGroups(forceRefresh: forceRefresh),
     ]);
     if (mounted) {
       setState(() {
@@ -112,7 +112,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
     );
   }
 
-  void _showAddMemberDialog() async {
+  void _showAddMemberDialog({String initialMode = ''}) async {
     // Show a loading indicator first or fetch immediately
     showDialog(
       context: context,
@@ -133,7 +133,9 @@ class _FamilyScreenState extends State<FamilyScreen> {
     final nameController = TextEditingController();
     final descController = TextEditingController();
     String label = 'OTHER';
-    String mode = groups.isEmpty ? 'create' : 'invite'; // Default to create if no groups exist
+    String mode = initialMode.isNotEmpty 
+        ? initialMode 
+        : (groups.isEmpty ? 'create' : 'invite');
     bool dialogSaving = false;
 
     if (!mounted) return;
@@ -312,10 +314,25 @@ class _FamilyScreenState extends State<FamilyScreen> {
                               setStateDialog(() => dialogSaving = false);
                               return;
                             }
+                            if (groups.isEmpty) {
+                              setStateDialog(() => dialogSaving = false);
+                              if (ctx.mounted) {
+                                Navigator.pop(ctx);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('You must create a Family Circle first before inviting members.'),
+                                    backgroundColor: Colors.orange,
+                                  ),
+                                );
+                              }
+                              return;
+                            }
                             final groupId = groups[0]['id'] as int;
                             final res = await ApiService.inviteFamilyMember(groupId, email, label);
-                            success = res != null;
-                            msg = success ? 'Invitation sent to $email!' : 'Failed to send invitation.';
+                            success = res['success'] == true;
+                            msg = success
+                                ? (res['message'] ?? 'Invitation sent to $email!')
+                                : (res['error'] ?? 'Failed to send invitation.');
                           } else if (mode == 'join') {
                             final code = codeController.text.trim();
                             if (code.isEmpty) {
@@ -323,8 +340,10 @@ class _FamilyScreenState extends State<FamilyScreen> {
                               return;
                             }
                             final res = await ApiService.joinFamilyByCode(code, label);
-                            success = res != null;
-                            msg = success ? (res['message'] ?? 'Request to join group submitted!') : 'Failed to join group.';
+                            success = res['success'] == true;
+                            msg = success
+                                ? (res['message'] ?? 'Request to join group submitted!')
+                                : (res['error'] ?? 'Failed to join group.');
                           } else {
                             final name = nameController.text.trim();
                             if (name.isEmpty) {
@@ -333,8 +352,8 @@ class _FamilyScreenState extends State<FamilyScreen> {
                             }
                             final desc = descController.text.trim();
                             final res = await ApiService.createFamilyGroup(name, desc);
-                            success = res != null;
-                            if (success && res != null) {
+                            success = res['success'] == true;
+                            if (success) {
                               final code = res['family_code']?.toString() ?? '';
                               msg = 'Family Circle "$name" created!';
                               if (ctx.mounted) {
@@ -343,7 +362,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                                   SnackBar(content: Text(msg), backgroundColor: Colors.green),
                                 );
                                 setState(() => _isLoading = true);
-                                _fetchMembers();
+                                _fetchMembers(forceRefresh: true);
                                 if (code.isNotEmpty) {
                                   Future.delayed(const Duration(milliseconds: 300), () {
                                     _showFamilyCodeDialog(code, name);
@@ -352,7 +371,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                               }
                               return;
                             }
-                            msg = 'Failed to create Family Circle.';
+                            msg = res['error']?.toString() ?? 'Failed to create Family Circle.';
                           }
 
                           if (ctx.mounted) {
@@ -363,8 +382,10 @@ class _FamilyScreenState extends State<FamilyScreen> {
                                 backgroundColor: success ? Colors.green : Colors.red,
                               ),
                             );
-                            setState(() => _isLoading = true);
-                            _fetchMembers();
+                            if (success) {
+                              setState(() => _isLoading = true);
+                              _fetchMembers(forceRefresh: true);
+                            }
                           }
                         },
                   child: dialogSaving
@@ -417,7 +438,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
             icon: const Icon(Icons.refresh_rounded, color: Color(0xFF14B8A6)),
             onPressed: () {
               setState(() => _isLoading = true);
-              _fetchMembers();
+              _fetchMembers(forceRefresh: true);
             },
           ),
           IconButton(
@@ -498,9 +519,64 @@ class _FamilyScreenState extends State<FamilyScreen> {
                   ),
 
                 if (_members.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(16.0),
-                    child: Center(child: Text('No family members found in database.')),
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    margin: const EdgeInsets.symmetric(vertical: 20),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFF14B8A6).withValues(alpha: 0.2)),
+                    ),
+                    child: Column(
+                      children: [
+                        const Icon(Icons.diversity_3_rounded, size: 56, color: Color(0xFF14B8A6)),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No Family Circle Connected',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : const Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Create a new circle as Family Head or join an existing circle using an invitation code.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF14B8A6),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                ),
+                                icon: const Icon(Icons.add_rounded, color: Colors.white, size: 18),
+                                label: const Text('Create Circle', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                onPressed: () => _showAddMemberDialog(initialMode: 'create'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Color(0xFF14B8A6)),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                ),
+                                icon: const Icon(Icons.vpn_key_outlined, color: Color(0xFF14B8A6), size: 18),
+                                label: const Text('Join Circle', style: TextStyle(color: Color(0xFF14B8A6), fontWeight: FontWeight.bold)),
+                                onPressed: () => _showAddMemberDialog(initialMode: 'join'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   )
                 else
                   ..._members.map((member) {

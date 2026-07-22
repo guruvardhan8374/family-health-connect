@@ -97,46 +97,45 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
         if not code:
             return Response({"error": "Family code is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        code_upper = str(code).strip().upper()
+
         try:
-            group = FamilyGroup.objects.annotate(member_count=Count('memberships')).get(family_code=code)
+            group = FamilyGroup.objects.annotate(member_count=Count('memberships')).get(family_code=code_upper)
         except FamilyGroup.DoesNotExist:
-            return Response({"error": "Invalid family code"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Invalid family code. Please check the code and try again."}, status=status.HTTP_400_BAD_REQUEST)
 
         if group.member_count >= group.max_members:
-            return Response({"error": "Family group has reached the maximum members limit"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": f"Family group '{group.name}' has reached its maximum member limit ({group.max_members})."}, status=status.HTTP_400_BAD_REQUEST)
 
         membership, created = FamilyMembership.objects.get_or_create(
             user=request.user,
             family_group=group,
             defaults={
                 'is_admin': False,
-                'is_approved': False, # Needs admin approval to join by code
-                'label': label
+                'is_approved': True,  # Secret family code provides immediate approval
+                'label': label,
+                'status': 'ACTIVE',
             }
         )
 
         if not created:
-            if membership.is_approved:
-                return Response({"message": "You are already a member of this family group."}, status=status.HTTP_200_OK)
-            return Response({"message": "Your join request is already pending admin approval."}, status=status.HTTP_200_OK)
+            if not membership.is_approved or membership.status != 'ACTIVE':
+                membership.is_approved = True
+                membership.status = 'ACTIVE'
+                membership.label = label
+                membership.save(update_fields=['is_approved', 'status', 'label'])
+                return Response({
+                    "message": f"Successfully joined '{group.name}'!",
+                    "membership": FamilyMembershipSerializer(membership).data
+                }, status=status.HTTP_200_OK)
 
-        # Notify family admins of the join request
-        try:
-            from notifications.services import create_notification
-            admins = FamilyMembership.objects.filter(family_group=group, is_admin=True, is_approved=True)
-            for admin in admins:
-                create_notification(
-                    user=admin.user,
-                    type='SYSTEM',
-                    title='New Join Request',
-                    message=f"{request.user.username} requested to join '{group.name}' using code.",
-                    priority='NORMAL'
-                )
-        except Exception:
-            pass
+            return Response({
+                "message": f"You are already a member of '{group.name}'.",
+                "membership": FamilyMembershipSerializer(membership).data
+            }, status=status.HTTP_200_OK)
 
         return Response({
-            "message": f"Join request submitted successfully! An admin of '{group.name}' must approve your request.",
+            "message": f"Successfully joined '{group.name}'!",
             "membership": FamilyMembershipSerializer(membership).data
         }, status=status.HTTP_201_CREATED)
 
@@ -203,7 +202,7 @@ class FamilyMembershipViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         groups = FamilyGroup.objects.filter(memberships__user=self.request.user, memberships__is_approved=True)
-        return FamilyMembership.objects.filter(family_group__in=groups).order_by('-joined_at')
+        return FamilyMembership.objects.filter(family_group__in=groups).select_related('user', 'family_group').order_by('-joined_at')
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -316,12 +315,19 @@ class FamilyInvitationViewSet(viewsets.ModelViewSet):
             defaults={
                 'is_admin': False,
                 'is_approved': True, # Pre-approved because they were invited by email
-                'label': label
+                'label': label,
+                'status': 'ACTIVE',
             }
         )
 
+        if not created:
+            membership.is_approved = True
+            membership.status = 'ACTIVE'
+            membership.label = label
+            membership.save(update_fields=['is_approved', 'status', 'label'])
+
         invitation.status = 'ACCEPTED'
-        invitation.save()
+        invitation.save(update_fields=['status'])
 
         return Response({
             "message": "Invitation accepted successfully",

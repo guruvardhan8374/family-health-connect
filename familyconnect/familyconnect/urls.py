@@ -28,9 +28,13 @@ from drf_spectacular.views import (
 def health_check(request):
     return JsonResponse({"status": "ok"})
 
+from health.views import HealthSyncAPIView
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/health/', health_check, name='health-check'),
+    path('api/health-sync', HealthSyncAPIView.as_view(), name='api-health-sync'),
+    path('api/health-sync/', HealthSyncAPIView.as_view(), name='api-health-sync-slash'),
     path('api/token/', SecureTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/v1/token/', SecureTokenObtainPairView.as_view(), name='token_obtain_pair_v1'),

@@ -3,10 +3,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from django.utils import timezone
-from django_ratelimit.decorators import ratelimit
 from rest_framework_simplejwt.views import TokenObtainPairView
-from django.utils.decorators import method_decorator
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.db import connection
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +24,6 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = (permissions.AllowAny,)
     serializer_class = RegisterSerializer
 
-    @method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True))
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -62,10 +60,45 @@ class RegisterView(generics.CreateAPIView):
 class SecureTokenObtainPairView(TokenObtainPairView):
     serializer_class = EmailTokenObtainPairSerializer
 
+class GoogleAuthView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request):
+        email = request.data.get('email')
+        username = request.data.get('username') or request.data.get('name')
+        
+        if not email:
+            return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get or create CustomUser by email
+        user, created = CustomUser.objects.get_or_create(
+            email=email,
+            defaults={
+                'username': username or email.split('@')[0],
+                'role': 'MEMBER',
+                'is_otp_verified': True,
+            }
+        )
+        if created:
+            user.set_unusable_password()
+            user.save()
+            UserSettings.objects.get_or_create(user=user)
+
+        # Issue Django SimpleJWT tokens
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            "message": "Google authentication successful",
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user_id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": getattr(user, 'role', 'MEMBER')
+        }, status=status.HTTP_200_OK)
+
 class VerifyOTPView(APIView):
     permission_classes = (permissions.AllowAny,)
 
-    @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request):
         email = request.data.get('email')
         otp = request.data.get('otp')
@@ -180,36 +213,78 @@ class LocationHistoryViewSet(viewsets.ModelViewSet):
 
 
 
-from django.db import connection
-
 class DebugDBView(APIView):
+    """Database health/structure debug view. Works with both SQLite and PostgreSQL."""
+    permission_classes = (permissions.AllowAny,)
+
+    def get(self, request):
+        from django.conf import settings
+        db_engine = settings.DATABASES['default']['ENGINE']
+        is_sqlite = 'sqlite3' in db_engine
+        is_postgres = 'postgresql' in db_engine
+
+        try:
+            with connection.cursor() as cursor:
+                # ── Get table list (works on both SQLite and PostgreSQL) ──────────
+                if is_postgres:
+                    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;")
+                else:  # SQLite
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
+                tables = [row[0] for row in cursor.fetchall()]
+
+                # ── User count ───────────────────────────────────────────────────
+                try:
+                    cursor.execute("SELECT COUNT(*) FROM users_customuser;")
+                    user_count = cursor.fetchone()[0]
+                except Exception:
+                    user_count = 'N/A'
+
+                # ── Family group count ───────────────────────────────────────────
+                try:
+                    cursor.execute("SELECT COUNT(*) FROM family_familygroup;")
+                    group_count = cursor.fetchone()[0]
+                except Exception:
+                    group_count = 'N/A'
+
+            return Response({
+                "database_engine": db_engine,
+                "is_sqlite": is_sqlite,
+                "is_postgres": is_postgres,
+                "tables": tables,
+                "user_count": user_count,
+                "family_group_count": group_count,
+                "status": "success",
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e), "status": "error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ListUsersDebugView(APIView):
+    """Lists all registered users (username + email + verified status) for debugging.
+    Remove or restrict this view before going to production.
+    """
     permission_classes = (permissions.AllowAny,)
 
     def get(self, request):
         try:
-            with connection.cursor() as cursor:
-                # Get tables
-                cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
-                tables = [row[0] for row in cursor.fetchall()]
-                
-                # Get columns for family_familygroup
-                cursor.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'family_familygroup';")
-                group_cols = {row[0]: row[1] for row in cursor.fetchall()}
-                
-                # Get columns for family_familymembership
-                cursor.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'family_familymembership';")
-                member_cols = {row[0]: row[1] for row in cursor.fetchall()}
-                
-                # Get group count
-                cursor.execute("SELECT COUNT(*) FROM family_familygroup;")
-                group_count = cursor.fetchone()[0]
-                
+            users = CustomUser.objects.only(
+                'id', 'username', 'email', 'is_otp_verified', 'role', 'date_joined'
+            ).order_by('-date_joined')
+            user_list = [
+                {
+                    'id': u.id,
+                    'username': u.username,
+                    'email': u.email,
+                    'role': u.role,
+                    'is_otp_verified': u.is_otp_verified,
+                    'date_joined': u.date_joined.isoformat(),
+                }
+                for u in users
+            ]
             return Response({
-                "tables": tables,
-                "family_familygroup_columns": group_cols,
-                "family_familymembership_columns": member_cols,
-                "family_group_count": group_count,
-                "status": "success"
+                'count': len(user_list),
+                'users': user_list,
+                'status': 'success',
             }, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"error": str(e), "status": "error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': str(e), 'status': 'error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

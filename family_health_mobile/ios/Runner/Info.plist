@@ -26,6 +26,32 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+
+	<!-- ── HealthKit capability ─────────────────────────────────────────────
+	     This key tells iOS that this app uses HealthKit.
+	     You must ALSO enable the HealthKit capability in Xcode:
+	       Target → Signing & Capabilities → + Capability → HealthKit
+	     ──────────────────────────────────────────────────────────────────── -->
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>healthkit</string>
+	</array>
+
+	<!-- ── HealthKit permission usage descriptions ──────────────────────────
+	     iOS requires one string per data type your app reads OR writes.
+	     These strings are shown verbatim in the system permission dialog.
+	     ──────────────────────────────────────────────────────────────────── -->
+
+	<!-- READ permissions (shown when requestAuthorization is called) -->
+	<key>NSHealthShareUsageDescription</key>
+	<string>Family Health Connect reads your Heart Rate, Step Count, Blood Oxygen, and Sleep data from Apple Health to display your daily health summary and share it with your family circle.</string>
+
+	<!-- WRITE permissions (required even if you only read, since the health
+	     package requests both by default on iOS) -->
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Family Health Connect may write health records such as step counts and heart rate readings back to Apple Health so your data stays in sync across devices.</string>
+
+	<!-- ── App scene & orientation configuration ────────────────────────── -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

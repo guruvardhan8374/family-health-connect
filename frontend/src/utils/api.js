@@ -1,7 +1,16 @@
 import axios from 'axios';
 import OfflineQueue from './offlineQueue';
 
-const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+  if (typeof window !== 'undefined' && window.location.hostname) {
+    const host = window.location.hostname;
+    return `http://${host}:8000`;
+  }
+  return 'http://127.0.0.1:8000';
+};
+
+const apiBaseUrl = getApiBaseUrl();
 
 const api = axios.create({
   baseURL: `${apiBaseUrl}/api/v1`,
@@ -27,23 +36,24 @@ export const clearAuthAndRedirect = (reason = 'session_expired') => {
   window.location.href = '/login';
 };
 
+const isPublicEndpoint = (url = '') => {
+  if (!url) return false;
+  return (
+    url.includes('/token/') ||
+    url.includes('/register/') ||
+    url.includes('/verify-otp/') ||
+    url.includes('/password-reset/') ||
+    url.includes('/verify-phone-otp/') ||
+    url.includes('/send-phone-otp/') ||
+    url.includes('/health-check/')
+  );
+};
+
 // ── Attach Bearer token to every outgoing request (except public/auth endpoints) ──
 api.interceptors.request.use(
   (config) => {
     const url = config.url || '';
-    // Do not send Authorization headers for public endpoints. If an expired/invalid token
-    // is sent, Django's JWTAuthentication will fail the request with 401 "Given token not valid",
-    // even if the endpoint has AllowAny permission.
-    const isPublic = 
-      url.includes('/token/') || 
-      url.includes('/register/') || 
-      url.includes('/verify-otp/') || 
-      url.includes('/password-reset/') ||
-      url.includes('/verify-phone-otp/') ||
-      url.includes('/send-phone-otp/') ||
-      url.includes('/health/');
-
-    if (!isPublic) {
+    if (!isPublicEndpoint(url)) {
       const token = localStorage.getItem('access_token');
       if (token) config.headers.Authorization = `Bearer ${token}`;
     }
@@ -62,7 +72,7 @@ api.interceptors.response.use(
     const errorDetail = error.response?.data?.detail || '';
 
     // ── Handle offline queueing for failed mutations ──────────────────────────
-    if (!error.response && originalRequest) {
+    if (!error.response && originalRequest && typeof window !== 'undefined' && !window.navigator.onLine) {
       const method = originalRequest.method?.toLowerCase();
       const writeMethods = ['post', 'put', 'patch', 'delete'];
       if (writeMethods.includes(method)) {
@@ -70,17 +80,7 @@ api.interceptors.response.use(
           const payload = originalRequest.data ? JSON.parse(originalRequest.data) : {};
           const endpoint = originalRequest.url.replace(originalRequest.baseURL || '', '');
           
-          // Skip public endpoints and refresh token endpoints
-          const isPublic = 
-            endpoint.includes('/token/') || 
-            endpoint.includes('/register/') || 
-            endpoint.includes('/verify-otp/') || 
-            endpoint.includes('/password-reset/') ||
-            endpoint.includes('/verify-phone-otp/') ||
-            endpoint.includes('/send-phone-otp/') ||
-            endpoint.includes('/health/');
-
-          if (!isPublic) {
+          if (!isPublicEndpoint(endpoint)) {
             OfflineQueue.push({
               endpoint,
               method: originalRequest.method.toUpperCase(),
@@ -95,25 +95,10 @@ api.interceptors.response.use(
       }
     }
 
-    // Never try to refresh for Google-auth users — their Firebase tokens
-    // expire and must be re-obtained via Google sign-in, not refresh endpoint
-    if (localStorage.getItem('auth_provider') === 'google') {
-      return Promise.reject(error);
-    }
-
     // Skip the interceptor for public/auth endpoints — a 401 there should be handled
     // directly by the component calling it, not by trying to refresh tokens.
     const url = originalRequest?.url || '';
-    const isPublic = 
-      url.includes('/token/') || 
-      url.includes('/register/') || 
-      url.includes('/verify-otp/') || 
-      url.includes('/password-reset/') ||
-      url.includes('/verify-phone-otp/') ||
-      url.includes('/send-phone-otp/') ||
-      url.includes('/health/');
-
-    if (isPublic) {
+    if (isPublicEndpoint(url)) {
       return Promise.reject(error);
     }
 

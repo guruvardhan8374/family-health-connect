@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ShieldCheck, ArrowRight, Loader2, RefreshCw, Mail } from 'lucide-react';
 import api from '../utils/api';
@@ -19,19 +19,13 @@ export default function OTPVerification() {
   const location  = useLocation();
   const email     = location.state?.email || '';
 
-  // Start resend countdown on mount
-  useEffect(() => {
-    startCountdown();
-  }, []);
-
-  // Auto-submit when all 6 digits filled
-  useEffect(() => {
-    if (otp.every(d => d !== '')) {
-      handleVerify();
+  const focusInput = (index) => {
+    if (index >= 0 && index < OTP_LENGTH) {
+      inputRefs.current[index]?.focus();
     }
-  }, [otp]);
+  };
 
-  const startCountdown = () => {
+  const startCountdown = useCallback(() => {
     setCountdown(RESEND_COOLDOWN);
     const interval = setInterval(() => {
       setCountdown(prev => {
@@ -39,13 +33,43 @@ export default function OTPVerification() {
         return prev - 1;
       });
     }, 1000);
-  };
+  }, []);
 
-  const focusInput = (index) => {
-    if (index >= 0 && index < OTP_LENGTH) {
-      inputRefs.current[index]?.focus();
+  const handleVerify = useCallback(async (e) => {
+    if (e) e.preventDefault();
+    const otpValue = otp.join('');
+    if (otpValue.length < OTP_LENGTH) {
+      setError('Please enter all 6 digits.');
+      return;
     }
-  };
+    setLoading(true);
+    setError('');
+    try {
+      await api.post('/users/verify-otp/', { email, otp: otpValue });
+      setSuccess('Account verified! Redirecting to login...');
+      setTimeout(() => navigate('/login', { state: { verified: true } }), 1500);
+    } catch (err) {
+      const msg = err.response?.data?.error || err.response?.data?.detail || 'Invalid OTP. Please check and try again.';
+      setError(msg);
+      // Clear inputs on wrong OTP so user can retype
+      setOtp(Array(OTP_LENGTH).fill(''));
+      focusInput(0);
+    } finally {
+      setLoading(false);
+    }
+  }, [otp, email, navigate]);
+
+  // Start resend countdown on mount
+  useEffect(() => {
+    startCountdown();
+  }, [startCountdown]);
+
+  // Auto-submit when all 6 digits filled
+  useEffect(() => {
+    if (otp.every(d => d !== '')) {
+      handleVerify();
+    }
+  }, [otp, handleVerify]);
 
   const handleChange = (e, index) => {
     const val = e.target.value.replace(/\D/g, ''); // digits only
@@ -88,30 +112,6 @@ export default function OTPVerification() {
     setOtp(newOtp);
     setError('');
     focusInput(Math.min(pasted.length, OTP_LENGTH - 1));
-  };
-
-  const handleVerify = async (e) => {
-    if (e) e.preventDefault();
-    const otpValue = otp.join('');
-    if (otpValue.length < OTP_LENGTH) {
-      setError('Please enter all 6 digits.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      await api.post('/users/verify-otp/', { email, otp: otpValue });
-      setSuccess('Account verified! Redirecting to login...');
-      setTimeout(() => navigate('/login', { state: { verified: true } }), 1500);
-    } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.detail || 'Invalid OTP. Please check and try again.';
-      setError(msg);
-      // Clear inputs on wrong OTP so user can retype
-      setOtp(Array(OTP_LENGTH).fill(''));
-      focusInput(0);
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleResend = async () => {

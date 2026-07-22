@@ -16,7 +16,7 @@ export default function MessageBubble({ msg, isMe }) {
           </div>
         );
       
-      case 'HEALTH':
+      case 'HEALTH': {
         const data = msg.health_data || {};
         return (
           <div className={`p-4 rounded-2xl border ${isMe ? 'bg-white/10 border-white/20' : 'bg-brand-50 border-brand-100'} space-y-3 min-w-[200px]`}>
@@ -41,6 +41,7 @@ export default function MessageBubble({ msg, isMe }) {
             </button>
           </div>
         );
+      }
 
       default:
         return <p className="text-sm leading-relaxed">{msg.content}</p>;

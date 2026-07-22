@@ -145,6 +145,10 @@ export default function FamilyDirectory() {
         name: newGroupName.trim(),
         description: newGroupDesc.trim()
       });
+      if (res.data?.offline || res.data?.status === 'queued') {
+        setCreateError('Network offline. Request queued for synchronization.');
+        return;
+      }
       const createdGroup = res.data;
       setNewGroupName('');
       setNewGroupDesc('');
@@ -182,6 +186,10 @@ export default function FamilyDirectory() {
         family_code: joinCode.trim().toUpperCase(),
         label: joinLabel
       });
+      if (res.data?.offline || res.data?.status === 'queued') {
+        setJoinError('Network offline. Request queued for synchronization.');
+        return;
+      }
       setJoinCode('');
       setJoinLabel('OTHER');
       setShowJoinModal(false);

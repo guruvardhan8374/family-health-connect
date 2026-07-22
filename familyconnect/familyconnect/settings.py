@@ -11,6 +11,16 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-^vtwsec6jbl4p4#d_gi=9
 DEBUG = config('DEBUG', default=True, cast=bool)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*', cast=lambda v: [s.strip() for s in v.split(',')])
+# Ensure developer local IPs are explicitly in allowed list for wireless debugging.
+# Add both old and new IPs so the server works regardless of which IP is active.
+if '*' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.extend([
+        '127.0.0.1',
+        'localhost',
+        '0.0.0.0',
+        '192.168.1.4',   # Current LAN IP
+        '192.168.1.6',   # Previous LAN IP (kept for safety)
+    ])
 
 AUTH_USER_MODEL = 'users.CustomUser'
 

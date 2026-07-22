@@ -4,7 +4,7 @@ from .views import (
     HealthSnapshotViewSet, HealthGoalViewSet,
     HealthMetricViewSet, HealthAlertViewSet,
     HealthSummaryView, FamilyHealthSummaryView,
-    HealthSummaryTodayView,
+    HealthSummaryTodayView, HealthSyncAPIView,
 )
 
 router = DefaultRouter()
@@ -15,6 +15,8 @@ router.register(r'alerts',     HealthAlertViewSet,    basename='healthalert')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('health-sync/',    HealthSyncAPIView.as_view(),       name='health-sync'),
+    path('sync/',           HealthSyncAPIView.as_view(),       name='health-sync-alt'),
     path('summary/today/',  HealthSummaryTodayView.as_view(),  name='health-summary-today'),
     path('summary/',        HealthSummaryView.as_view(),       name='health-summary'),
     path('family-summary/', FamilyHealthSummaryView.as_view(), name='family-health-summary'),

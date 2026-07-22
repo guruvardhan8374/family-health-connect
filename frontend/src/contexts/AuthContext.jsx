@@ -64,7 +64,15 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Load user on mount
-  useEffect(() => { loadUser(); }, [loadUser]);
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) {
+        loadUser();
+      }
+    });
+    return () => { active = false; };
+  }, [loadUser]);
 
   // ── Called immediately after a successful login API response ─────────────
   // Returns a Promise so callers can await it before navigating

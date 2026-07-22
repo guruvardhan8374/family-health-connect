@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Send, Video, Loader2, MoreVertical, Paperclip, 
   Search, Phone, Smile, Mic, Pin, Archive, Trash2,
@@ -53,6 +53,48 @@ export default function Chat() {
   const scrollRef = useRef(null);
   const pcRef = useRef(null);
 
+  const fetchStories = useCallback(async () => {
+    try {
+      const res = await api.get('/chat/stories/');
+      setStories(res.data.results || res.data || []);
+    } catch (err) { console.error(err); }
+  }, []);
+
+  const fetchConvs = useCallback(async () => {
+    try {
+      const res = await api.get('/chat/conversations/');
+      const convList = res.data.results || res.data || [];
+      setConversations(convList);
+      if (!activeConv && convList.length > 0) setActiveConv(convList[0]);
+    } catch (err) { console.error(err); }
+  }, [activeConv]);
+
+  const updateConvList = useCallback((msg) => {
+    setConversations(prev => prev.map(c => c.id === msg.conversation ? { ...c, latest_message: msg } : c));
+  }, []);
+
+  const fetchMessages = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const res = await api.get(`/chat/messages/?conversation=${activeConv.id}`);
+      const msgs = res.data.results || res.data || [];
+      const reversed = msgs.slice().reverse();
+      
+      setMessages(prev => {
+        if (prev.length === reversed.length && prev.every((m, idx) => m.id === reversed[idx]?.id)) {
+          return prev;
+        }
+        return reversed;
+      });
+      
+      api.post('/chat/messages/mark-read/', { conversation: activeConv.id }).catch(err => console.error(err));
+    } catch (err) { 
+      console.error(err); 
+    } finally { 
+      if (!silent) setLoading(false); 
+    }
+  }, [activeConv]);
+
   // Verify family membership first on mount, and then fetch details
   useEffect(() => {
     const checkFamilyAndInit = async () => {
@@ -76,7 +118,7 @@ export default function Chat() {
       }
     };
     checkFamilyAndInit();
-  }, []);
+  }, [fetchConvs, fetchStories]);
 
   // Establish real-time WebSocket connection to Django Channels ASGI on activeConv change
   useEffect(() => {
@@ -143,14 +185,9 @@ export default function Chat() {
       console.log("[WebSocket] Cleaning up connection...");
       ws.close();
     };
-  }, [activeConv, hasFamily]);
+  }, [activeConv, hasFamily, updateConvList, currentUser.id]);
 
-  const fetchStories = async () => {
-    try {
-      const res = await api.get('/chat/stories/');
-      setStories(res.data.results || res.data || []);
-    } catch (err) { console.error(err); }
-  };
+
 
   const handleAddStory = async () => {
     const media_url = prompt("Enter an image URL for your story:");
@@ -299,45 +336,11 @@ export default function Chat() {
     }
   };
 
-  const fetchConvs = async () => {
-    try {
-      const res = await api.get('/chat/conversations/');
-      const convList = res.data.results || res.data || [];
-      setConversations(convList);
-      if (!activeConv && convList.length > 0) setActiveConv(convList[0]);
-    } catch (err) { console.error(err); }
-  };
 
-  const updateConvList = (msg) => {
-    setConversations(prev => prev.map(c => c.id === msg.conversation ? { ...c, latest_message: msg } : c));
-  };
-
-  const fetchMessages = async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      const res = await api.get(`/chat/messages/?conversation=${activeConv.id}`);
-      const msgs = res.data.results || res.data || [];
-      const reversed = msgs.slice().reverse();
-      
-      setMessages(prev => {
-        // Only update state if message IDs list has changed to avoid unnecessary re-renders/scrolls
-        if (prev.length === reversed.length && prev.every((m, idx) => m.id === reversed[idx]?.id)) {
-          return prev;
-        }
-        return reversed;
-      });
-      
-      api.post('/chat/messages/mark-read/', { conversation: activeConv.id }).catch(err => console.error(err));
-    } catch (err) { 
-      console.error(err); 
-    } finally { 
-      if (!silent) setLoading(false); 
-    }
-  };
 
   useEffect(() => { 
     if (activeConv) fetchMessages();
-  }, [activeConv]);
+  }, [activeConv, fetchMessages]);
 
   // Periodic polling fallback for messages when WebSocket is closed/unsupported
   useEffect(() => {
@@ -351,7 +354,7 @@ export default function Chat() {
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [activeConv]);
+  }, [activeConv, fetchMessages]);
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 

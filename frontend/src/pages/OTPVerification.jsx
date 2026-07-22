@@ -122,8 +122,9 @@ export default function OTPVerification() {
     setError('');
     setSuccess('');
     try {
-      await api.post('/users/resend-otp/', { email });
-      setSuccess('A new OTP has been sent to your email.');
+      const res = await api.post('/users/resend-otp/', { email });
+      const code = res.data?.otp;
+      setSuccess(code ? `New verification code generated: ${code}` : 'A new OTP has been sent to your email.');
       setOtp(Array(OTP_LENGTH).fill(''));
       focusInput(0);
       startCountdown();

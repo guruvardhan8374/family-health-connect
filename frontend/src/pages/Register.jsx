@@ -71,7 +71,7 @@ export default function Register() {
         role:             formData.role,
       });
       // Always redirect to OTP verification so email is verified before login
-      navigate(`/verify-otp?email=${encodeURIComponent(formData.email.trim())}`);
+      navigate('/verify-otp', { state: { email: formData.email.trim() } });
     } catch (err) {
       if (!err.response) {
         setError('Server is unreachable. It may be waking up — please wait 30 seconds and try again.');

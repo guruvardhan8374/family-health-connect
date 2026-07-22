@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { ShieldCheck, ArrowRight, Loader2, RefreshCw, Mail } from 'lucide-react';
 import api from '../utils/api';
 
@@ -17,7 +17,9 @@ export default function OTPVerification() {
   const inputRefs = useRef([]);
   const navigate  = useNavigate();
   const location  = useLocation();
-  const email     = location.state?.email || '';
+  const [searchParams] = useSearchParams();
+  // Support email from router state (navigate with state) OR query param (?email=...)
+  const email = location.state?.email || searchParams.get('email') || '';
 
   const focusInput = (index) => {
     if (index >= 0 && index < OTP_LENGTH) {

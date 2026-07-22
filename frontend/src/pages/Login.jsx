@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { HeartPulse, Mail, Lock, ArrowRight, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
 import api from '../utils/api';
-import { signInWithGoogle } from '../utils/firebase';
+import { signInWithGoogle, checkRedirectResult } from '../utils/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
@@ -31,7 +31,7 @@ export default function Login() {
       await api.post('/users/resend-otp/', { email: targetEmail });
       setResendMsg(`Verification email sent to ${targetEmail}!`);
       setTimeout(() => {
-        navigate(`/verify-otp?email=${encodeURIComponent(targetEmail)}`);
+        navigate('/verify-otp', { state: { email: targetEmail } });
       }, 1500);
     } catch (err) {
       setResendMsg(err.response?.data?.error || 'Failed to resend verification email.');
@@ -40,7 +40,7 @@ export default function Login() {
     }
   };
 
-  // ── Read session redirect reason (set by api.js interceptor) ────────────
+  // ── Read session redirect reason & Google redirect result ────────────
   useEffect(() => {
     const reason = sessionStorage.getItem('auth_redirect_reason');
     if (reason === 'session_expired') {
@@ -49,6 +49,32 @@ export default function Login() {
       });
       sessionStorage.removeItem('auth_redirect_reason');
     }
+
+    // Handle return from Firebase Google redirect sign-in
+    const handleRedirect = async () => {
+      try {
+        const user = await checkRedirectResult();
+        if (user) {
+          setGoogleLoading(true);
+          const idToken = await user.getIdToken();
+          const res = await api.post('/users/google-login/', {
+            email: user.email,
+            username: user.displayName || user.email?.split('@')[0] || 'User',
+            id_token: idToken,
+          });
+          if (res.data && res.data.access) {
+            localStorage.setItem('auth_provider', 'google');
+            await login(res.data);
+            navigate('/');
+          }
+        }
+      } catch (err) {
+        console.error("Redirect login processing error:", err);
+      } finally {
+        setGoogleLoading(false);
+      }
+    };
+    handleRedirect();
   }, []);
 
   // Ping backend on mount to check/wake server
@@ -84,6 +110,10 @@ export default function Login() {
     setError('');
     try {
       const user = await signInWithGoogle();
+      if (!user) {
+        // Redirecting or popup blocked handled by fallback
+        return;
+      }
       const idToken = await user.getIdToken();
       const res = await api.post('/users/google-login/', {
         email: user.email,
@@ -100,7 +130,11 @@ export default function Login() {
       }
     } catch (err) {
       console.error(err);
-      setError(`Google Sign-In failed: ${err.message || 'Unknown error'}`);
+      if (err.code === 'auth/popup-blocked' || err.message?.includes('popup-blocked')) {
+        setError('Popup blocked by browser. Initiating secure redirect sign-in...');
+      } else {
+        setError(`Google Sign-In failed: ${err.message || 'Unknown error'}`);
+      }
     } finally {
       setGoogleLoading(false);
     }
@@ -141,7 +175,8 @@ export default function Login() {
         if (data?.email_unverified || data?.detail?.includes?.('verify your email')) {
           const unverified = data.email || email.trim();
           setUnverifiedEmail(unverified);
-          setError('Please verify your email before logging in.');
+          // Auto-navigate to OTP verification page immediately
+          navigate('/verify-otp', { state: { email: unverified } });
           return;
         }
         if (err.response.status === 401) {

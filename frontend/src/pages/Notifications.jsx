@@ -69,7 +69,9 @@ export default function Notifications() {
           body: data.message,
           icon: '/favicon.ico',
         });
-      } catch (_) {}
+      } catch (err) {
+        console.warn('Browser notification failed:', err);
+      }
     }
   });
 

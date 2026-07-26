@@ -152,7 +152,8 @@ export default function HealthHub() {
     const updateTime = new Date(updatedAt).getTime();
     if (isNaN(updateTime)) return true;
     const twoHoursMs = 2 * 60 * 60 * 1000;
-    return (Date.now() - updateTime) > twoHoursMs;
+    const now = new Date().getTime();
+    return (now - updateTime) > twoHoursMs;
   };
 
   const handleVitalsUpdate = useCallback((snapshot) => {

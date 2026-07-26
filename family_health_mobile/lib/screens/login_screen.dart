@@ -4,6 +4,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
 import '../services/sync_service.dart';
+import '../services/health_service.dart';
+import '../services/health_sync_service.dart';
 import '../main.dart';
 import 'register_screen.dart';
 
@@ -73,38 +75,24 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.pushReplacement(
           context, MaterialPageRoute(builder: (_) => const MainShell()));
 
-      // ── 3. Start WebSocket + preload data in background after navigation ─────
+      // ── 3. Start WebSocket + trigger immediate Health Data sync in background ─────
       SyncService.instance.connect();
+      HealthService.instance.fetchTodaySnapshot().then((snapshot) {
+        HealthSyncService.instance.syncSnapshot(snapshot);
+      }).catchError((_) {});
 
     } else {
       final errorMsg = (result?['error'] ?? 'network_error').toString();
-      final lowerErr = errorMsg.toLowerCase();
-      if (lowerErr.contains('verify your email') || lowerErr.contains('email_unverified') || lowerErr.contains('unverified')) {
-        final targetEmail = usernameInput.contains('@') ? usernameInput : '';
-        if (targetEmail.isNotEmpty) {
-          ApiService.resendOtp(targetEmail);
+      setState(() {
+        if (errorMsg == 'timeout' || errorMsg == 'network_error') {
+          _error = 'Connection timed out. Please check your internet and try again.';
+        } else if (errorMsg != 'unauthorized') {
+          _error = errorMsg;
+        } else {
+          _error = 'Invalid username or password. Please try again.';
         }
-        setState(() => _isLoading = false);
-        if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => OtpVerificationScreen(email: targetEmail),
-            ),
-          );
-        }
-      } else {
-        setState(() {
-          if (errorMsg == 'timeout' || errorMsg == 'network_error') {
-            _error = 'Connection timed out. Please check your internet and try again.';
-          } else if (errorMsg != 'unauthorized') {
-            _error = errorMsg;
-          } else {
-            _error = 'Invalid username or password. Please try again.';
-          }
-          _isLoading = false;
-        });
-      }
+        _isLoading = false;
+      });
     }
   }
 
@@ -255,31 +243,49 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() { _isLoading = true; _error = null; });
     try {
       final GoogleSignIn googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
-      debugPrint('[GoogleSignIn] Attempting native sign in...');
+      debugPrint('=== [GoogleSignIn STEP 1] Calling googleSignIn.signIn() ... ===');
+
+      // Force account chooser to always appear
+      await googleSignIn.signOut();
+      await googleSignIn.disconnect().catchError((_) => null);
+
       final GoogleSignInAccount? account = await googleSignIn.signIn();
+
       if (account == null) {
-        debugPrint('[GoogleSignIn] User canceled sign in dialog');
+        debugPrint('=== [GoogleSignIn STEP 1 CANCELLED] User closed or cancelled account picker ===');
         setState(() => _isLoading = false);
-        return; // User canceled
+        return;
       }
-      debugPrint('[GoogleSignIn] Account obtained: ${account.email}');
+
+      debugPrint('=== [GoogleSignIn STEP 2 SUCCESS] Account selected: ${account.email} (id: ${account.id}) ===');
+      debugPrint('=== [GoogleSignIn STEP 3] Fetching account.authentication ... ===');
       final GoogleSignInAuthentication auth = await account.authentication;
+
+      debugPrint('=== [GoogleSignIn STEP 3 RESULT] accessToken null? ${auth.accessToken == null}, idToken null? ${auth.idToken == null} ===');
       final idToken = auth.idToken ?? '';
+      debugPrint('=== [GoogleSignIn STEP 4] Calling ApiService.googleLogin with email: ${account.email} ... ===');
 
       await _completeGoogleAuth(account.email, account.displayName ?? '', idToken);
-    } catch (e) {
-      debugPrint('[GoogleSignIn] Native sign in exception: $e');
-      setState(() => _isLoading = false);
-      if (!mounted) return;
-      // Fallback: Show Google Email sign in prompt if native OAuth is unconfigured on device
-      _showGoogleEmailFallbackDialog();
+    } catch (e, stackTrace) {
+      debugPrint('=====================================================');
+      debugPrint('=== [GoogleSignIn EXCEPTION CAUGHT] ===');
+      debugPrint('Type: ${e.runtimeType}');
+      debugPrint('Details: $e');
+      debugPrint('Stack Trace:\n$stackTrace');
+      debugPrint('=====================================================');
+
+      setState(() {
+        _error = 'Google Sign-In failed: $e';
+        _isLoading = false;
+      });
     }
   }
 
   Future<void> _completeGoogleAuth(String email, String name, String idToken) async {
     setState(() { _isLoading = true; _error = null; });
+    debugPrint('=== [GoogleAuth] Calling ApiService.googleLogin ... ===');
     final result = await ApiService.googleLogin(email, name, idToken);
-    debugPrint('[GoogleSignIn] ApiService result: $result');
+    debugPrint('=== [GoogleAuth] ApiService result: $result ===');
     if (result != null && result['success'] == true) {
       final data = result['data'] as Map<String, dynamic>;
       await Future.wait([

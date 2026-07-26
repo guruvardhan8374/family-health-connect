@@ -9,6 +9,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r'snapshots',  HealthSnapshotViewSet, basename='health-snapshot')
+router.register(r'records',    HealthSnapshotViewSet, basename='health-records')
 router.register(r'goals',      HealthGoalViewSet,     basename='health-goal')
 router.register(r'metrics',    HealthMetricViewSet,   basename='healthmetric')
 router.register(r'alerts',     HealthAlertViewSet,    basename='healthalert')

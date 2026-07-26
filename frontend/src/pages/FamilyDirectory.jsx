@@ -50,10 +50,19 @@ export default function FamilyDirectory() {
 
       if (fetchedGroups.length > 0) {
         // If there's no activeGroup or it's not in the fetched list, set first
-        const currentActive = activeGroup 
-          ? fetchedGroups.find(g => g.id === activeGroup.id) 
-          : null;
-        setActiveGroup(currentActive || fetchedGroups[0]);
+        const savedGroupId = localStorage.getItem('active_family_group_id');
+        let currentActive = null;
+        if (activeGroup) {
+          currentActive = fetchedGroups.find(g => g.id === activeGroup.id);
+        } else if (savedGroupId) {
+          currentActive = fetchedGroups.find(g => g.id === parseInt(savedGroupId));
+        }
+        
+        const finalActive = currentActive || fetchedGroups[0];
+        setActiveGroup(finalActive);
+        if (finalActive) {
+          localStorage.setItem('active_family_group_id', finalActive.id);
+        }
 
         // 2. Fetch memberships
         const membersRes = await api.get('/family/members/');
@@ -95,6 +104,7 @@ export default function FamilyDirectory() {
     const selected = groups.find(g => g.id === parseInt(groupId));
     if (selected) {
       setActiveGroup(selected);
+      localStorage.setItem('active_family_group_id', selected.id);
       setActiveTab('directory');
       setActiveDropdownId(null);
     }
@@ -513,17 +523,6 @@ export default function FamilyDirectory() {
           >
             Directory ({approvedMembers.length})
           </button>
-          {isCircleAdmin && (
-            <button 
-              onClick={() => setActiveTab('invitations')}
-              className={`pb-3 font-extrabold tracking-wide uppercase transition-all border-b-2 flex items-center space-x-2 ${activeTab === 'invitations' ? 'border-brand-500 text-brand-600' : 'border-transparent text-navy-400 hover:text-navy-700'}`}
-            >
-              <span>Management Portal</span>
-              {(pendingMembers.length > 0) && (
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
-              )}
-            </button>
-          )}
         </div>
       </div>
 

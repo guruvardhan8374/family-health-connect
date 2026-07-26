@@ -4,6 +4,8 @@ import '../services/api_service.dart';
 import '../services/sync_service.dart';
 import '../services/health_service.dart';
 import '../services/health_sync_service.dart';
+import 'package:health/health.dart';
+import 'package:flutter/foundation.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -18,14 +20,38 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
 
   // Real-time Vitals from Health Connect
   String _heartRate = '--';
+  String _restingHeartRate = '--';
+  String _hrv = '--';
   String _steps = '--';
   String _calories = '--';
+  String _totalCalories = '--';
   String _distance = '--';
+  String _floorsClimbed = '--';
   String _sleep = '--';
   String _spo2 = '--';
   String _hydration = '--';
   String _weight = '--';
+  String _height = '--';
+  String _bodyFatPct = '--';
+  String _respiratoryRate = '--';
+  String _vo2Max = '--';
+  String _bmr = '--';
   String _bloodPressure = '--/--';
+  String _workoutMinutes = '--';
+  String _workoutType = '--';
+
+  // Extended metrics
+  String _sleepLight = '--';
+  String _sleepDeep = '--';
+  String _sleepRem = '--';
+  String _sleepAwake = '--';
+  String _bodyFat = '--';
+  String _exerciseCount = '--';
+  String _bmi = '--';
+
+  // Health Connect status
+  HealthConnectSdkStatus? _healthConnectStatus;
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
 
   // Goals
   int _stepsGoal = 10000;
@@ -52,9 +78,10 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _checkHealthConnectAvailability();
     _initHealthSync();
     _startPeriodic15MinSync();
-
+ 
     _syncSubscription = SyncService.instance.stream.listen((event) {
       if (event['type'] == 'health.update') {
         _fetchData();
@@ -69,6 +96,15 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
       _requestHealthPermissionsWithDialog();
       _performVercelSync();
     });
+  }
+
+  Future<void> _checkHealthConnectAvailability() async {
+    final status = await HealthService.instance.getHealthConnectStatus();
+    if (mounted) {
+      setState(() {
+        _healthConnectStatus = status;
+      });
+    }
   }
 
   @override
@@ -132,16 +168,22 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
   /// Shows a friendly explanation dialog then triggers the OS permission sheet.
   /// Called once when the Health Hub screen opens for the first time.
   Future<void> _requestHealthPermissionsWithDialog() async {
-    // Skip if we already have permissions
+    final dismissedOrGranted = await HealthService.instance.isPermissionDismissedOrGranted();
     final already = await HealthService.instance.hasPermissions();
     if (already) {
+      await HealthService.instance.setPermissionDismissedOrGranted(true);
+      _fetchCoreMetrics();
+      return;
+    }
+
+    if (dismissedOrGranted) {
       _fetchCoreMetrics();
       return;
     }
 
     if (!mounted) return;
 
-    // Show explanation dialog before the system prompt
+    // Show explanation dialog before launching the system Health Connect prompt
     final proceed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -172,40 +214,99 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
             ),
           ],
         ),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Family Health Connect would like to read the following from your device:',
-              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  'Family Health Connect requests permission to read official Health Connect metrics:',
+                  style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                ),
+                SizedBox(height: 14),
+                _PermissionItem(
+                  icon: Icons.favorite_rounded,
+                  color: Color(0xFFEF4444),
+                  label: 'Heart Rate',
+                  description: 'Latest BPM & Resting Heart Rate',
+                ),
+                _PermissionItem(
+                  icon: Icons.directions_walk_rounded,
+                  color: Color(0xFF22C55E),
+                  label: 'Steps',
+                  description: 'Total daily step count',
+                ),
+                _PermissionItem(
+                  icon: Icons.water_drop_rounded,
+                  color: Color(0xFF3B82F6),
+                  label: 'Blood Oxygen',
+                  description: 'Latest SpO₂ oxygen saturation %',
+                ),
+                _PermissionItem(
+                  icon: Icons.bedtime_rounded,
+                  color: Color(0xFF8B5CF6),
+                  label: 'Sleep',
+                  description: 'Asleep, Deep, Light & REM stages',
+                ),
+                _PermissionItem(
+                  icon: Icons.local_fire_department_rounded,
+                  color: Color(0xFFF97316),
+                  label: 'Active Calories Burned',
+                  description: 'Active & total energy expenditure',
+                ),
+                _PermissionItem(
+                  icon: Icons.map_rounded,
+                  color: Color(0xFF06B6D4),
+                  label: 'Distance',
+                  description: 'Total walking & running distance',
+                ),
+                _PermissionItem(
+                  icon: Icons.accessibility_new_rounded,
+                  color: Color(0xFF6366F1),
+                  label: 'BMI',
+                  description: 'Body Mass Index tracking',
+                ),
+                _PermissionItem(
+                  icon: Icons.scale_rounded,
+                  color: Color(0xFFEC4899),
+                  label: 'Weight',
+                  description: 'Body weight measurements',
+                ),
+                _PermissionItem(
+                  icon: Icons.height_rounded,
+                  color: Color(0xFF10B981),
+                  label: 'Height',
+                  description: 'Height metric tracking',
+                ),
+                _PermissionItem(
+                  icon: Icons.local_drink_rounded,
+                  color: Color(0xFF0284C7),
+                  label: 'Hydration',
+                  description: 'Daily water intake logging',
+                ),
+                _PermissionItem(
+                  icon: Icons.monitor_heart_rounded,
+                  color: Color(0xFFD97706),
+                  label: 'Blood Pressure',
+                  description: 'Systolic & Diastolic readings',
+                ),
+                _PermissionItem(
+                  icon: Icons.pie_chart_rounded,
+                  color: Color(0xFF84CC16),
+                  label: 'Body Fat',
+                  description: 'Body fat percentage',
+                ),
+                _PermissionItem(
+                  icon: Icons.fitness_center_rounded,
+                  color: Color(0xFFA855F7),
+                  label: 'Exercise',
+                  description: 'Workouts & active sessions',
+                ),
+              ],
             ),
-            SizedBox(height: 16),
-            _PermissionItem(
-              icon: Icons.favorite_rounded,
-              color: Color(0xFFEF4444),
-              label: 'Heart Rate',
-              description: 'Latest BPM reading',
-            ),
-            _PermissionItem(
-              icon: Icons.directions_walk_rounded,
-              color: Color(0xFF22C55E),
-              label: 'Step Count',
-              description: 'Total steps today',
-            ),
-            _PermissionItem(
-              icon: Icons.water_drop_rounded,
-              color: Color(0xFF3B82F6),
-              label: 'Blood Oxygen',
-              description: 'Latest SpO₂ reading',
-            ),
-            _PermissionItem(
-              icon: Icons.bedtime_rounded,
-              color: Color(0xFF8B5CF6),
-              label: 'Sleep',
-              description: 'Hours slept last night',
-            ),
-          ],
+          ),
         ),
         actions: [
           TextButton(
@@ -228,9 +329,61 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
     );
 
     if (proceed == true) {
-      final granted = await HealthService.instance.requestPermissions();
-      debugPrint('[HealthHub] Permissions granted: $granted');
-      if (granted) _fetchCoreMetrics();
+      await _handlePermissionRequestFlow();
+    } else {
+      await HealthService.instance.setPermissionDismissedOrGranted(true);
+    }
+  }
+
+  Future<void> _handlePermissionRequestFlow() async {
+    // 1. Check if Health Connect is installed on Android
+    if (_isAndroid) {
+      final status = await HealthService.instance.getHealthConnectStatus();
+      if (status == HealthConnectSdkStatus.sdkUnavailableProviderUpdateRequired ||
+          status == HealthConnectSdkStatus.sdkUnavailable) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Google Health Connect is not installed. Redirecting to Play Store...'),
+              backgroundColor: Colors.amber,
+            ),
+          );
+        }
+        await HealthService.instance.installHealthConnect();
+        return;
+      }
+    }
+
+    // 2. Request official Health Connect SDK authorization
+    final granted = await HealthService.instance.requestPermissions();
+    debugPrint('[HealthHub] System authorization result: $granted');
+
+    if (!mounted) return;
+
+    await HealthService.instance.setPermissionDismissedOrGranted(true);
+    final hasPerms = await HealthService.instance.hasPermissions();
+    if (granted || hasPerms) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Health Connect Authorized! Updating health metrics...'),
+          backgroundColor: Color(0xFF14B8A6),
+        ),
+      );
+      await _fetchCoreMetrics();
+      await _fetchData();
+      await _performVercelSync();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('⚠️ Health permissions were denied. Health metrics cannot be displayed.'),
+          backgroundColor: Colors.orange,
+          action: SnackBarAction(
+            label: 'SETTINGS',
+            textColor: Colors.white,
+            onPressed: () => HealthService.instance.openHealthConnectSettings(),
+          ),
+        ),
+      );
     }
   }
 
@@ -273,6 +426,13 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
         _hydration = (cached['hydration'] ?? '--').toString();
         _weight = (cached['weight'] ?? '--').toString();
         _bloodPressure = (cached['blood_pressure'] ?? '--/--').toString();
+        _sleepLight = (cached['sleep_light'] ?? '--').toString();
+        _sleepDeep = (cached['sleep_deep'] ?? '--').toString();
+        _sleepRem = (cached['sleep_rem'] ?? '--').toString();
+        _sleepAwake = (cached['sleep_awake'] ?? '--').toString();
+        _bodyFat = (cached['body_fat'] ?? '--').toString();
+        _exerciseCount = (cached['exercise_count'] ?? '--').toString();
+        _bmi = (cached['bmi'] ?? '--').toString();
       });
     }
   }
@@ -284,38 +444,64 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
     await _loadCachedVitals();
     // 3. Connect WebSocket for live sync
     await HealthSyncService.instance.connect();
-    // 4. Start live monitoring (checks Google Fit every 30s)
+    // 4. Start live monitoring (checks Health Connect / HealthKit every 30s)
     HealthService.instance.startLiveMonitoring((snapshot) {
       if (mounted) {
         setState(() {
-          _heartRate = (snapshot['heart_rate'] ?? '--').toString();
-          _steps = (snapshot['steps'] ?? '0').toString();
-          _calories = (snapshot['calories'] ?? '0').toString();
-          _distance = (snapshot['distance'] ?? '0.0').toString();
-          _sleep = (snapshot['sleep_hours'] ?? '--').toString();
-          _spo2 = (snapshot['spo2'] ?? '--').toString();
-          _hydration = (snapshot['hydration'] ?? '--').toString();
-          _weight = (snapshot['weight'] ?? '--').toString();
-          _bloodPressure = (snapshot['blood_pressure'] ?? '--/--').toString();
+          _heartRate       = (snapshot['heart_rate'] ?? '--').toString();
+          _restingHeartRate= (snapshot['resting_heart_rate'] ?? '--').toString();
+          _hrv             = (snapshot['hrv'] ?? '--').toString();
+          _steps           = (snapshot['steps'] ?? '0').toString();
+          _calories        = (snapshot['calories'] ?? '0').toString();
+          _totalCalories   = (snapshot['total_calories'] ?? '--').toString();
+          _distance        = (snapshot['distance'] ?? '0.0').toString();
+          _floorsClimbed   = (snapshot['floors_climbed'] ?? '--').toString();
+          _sleep           = (snapshot['sleep_hours'] ?? '--').toString();
+          _spo2            = (snapshot['spo2'] ?? '--').toString();
+          _hydration       = (snapshot['hydration'] ?? '--').toString();
+          _weight          = (snapshot['weight'] ?? '--').toString();
+          _height          = (snapshot['height'] ?? '--').toString();
+          _bodyFatPct      = (snapshot['body_fat_pct'] ?? '--').toString();
+          _respiratoryRate = (snapshot['respiratory_rate'] ?? '--').toString();
+          _vo2Max          = (snapshot['vo2_max'] ?? '--').toString();
+          _bmr             = (snapshot['bmr'] ?? '--').toString();
+          _bloodPressure   = (snapshot['blood_pressure'] ?? '--/--').toString();
+          _sleepLight      = (snapshot['sleep_light'] ?? '--').toString();
+          _sleepDeep       = (snapshot['sleep_deep'] ?? '--').toString();
+          _sleepRem        = (snapshot['sleep_rem'] ?? '--').toString();
+          _sleepAwake      = (snapshot['sleep_awake'] ?? '--').toString();
+          _bodyFat         = (snapshot['body_fat'] ?? '--').toString();
+          _exerciseCount   = (snapshot['exercise_count'] ?? '--').toString();
+          _workoutMinutes  = (snapshot['workout_minutes'] ?? '--').toString();
+          _workoutType     = (snapshot['workout_type'] ?? '--').toString();
+          _bmi             = (snapshot['bmi'] ?? '--').toString();
         });
       }
     });
   }
 
   Future<void> _fetchTodaySummary() async {
+    // Only query backend summary if live Health Connect monitoring hasn't set real values
     final todaySummary = await ApiService.getTodayHealthSummary();
     if (todaySummary != null && mounted) {
       setState(() {
-        _steps = (todaySummary['steps'] ?? '0').toString();
-        _distance = (todaySummary['distance'] ?? '0.0').toString();
-        _heartRate = (todaySummary['heart_rate'] ?? '--').toString();
-        _bloodPressure = (todaySummary['blood_pressure'] ?? '--/--').toString();
+        if (_steps == '--' || _steps == '0') {
+          _steps = (todaySummary['steps'] ?? 'No Data Available').toString();
+        }
+        if (_distance == '--' || _distance == '0.0') {
+          _distance = (todaySummary['distance'] ?? 'No Data Available').toString();
+        }
+        if (_heartRate == '--') {
+          _heartRate = (todaySummary['heart_rate'] ?? 'No Data Available').toString();
+        }
+        if (_bloodPressure == '--/--') {
+          _bloodPressure = (todaySummary['blood_pressure'] ?? 'No Data Available').toString();
+        }
       });
     }
   }
 
   Future<void> _fetchData() async {
-    // ── Run all 3 calls in PARALLEL — was sequential (3× slower) ──────────
     final results = await Future.wait([
       ApiService.getHealthData(),
       ApiService.getHealthSummary(range: 'daily'),
@@ -332,18 +518,25 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
         _isLoading = false;
 
         if (todaySummary != null) {
-          _steps         = (todaySummary['steps']          ?? '0').toString();
-          _distance      = (todaySummary['distance']       ?? '0.0').toString();
-          _heartRate     = (todaySummary['heart_rate']     ?? '--').toString();
-          _bloodPressure = (todaySummary['blood_pressure'] ?? '--/--').toString();
+          if (_steps == '--' || _steps == '0') _steps = (todaySummary['steps'] ?? 'No Data Available').toString();
+          if (_distance == '--' || _distance == '0.0') _distance = (todaySummary['distance'] ?? 'No Data Available').toString();
+          if (_heartRate == '--') _heartRate = (todaySummary['heart_rate'] ?? 'No Data Available').toString();
+          if (_bloodPressure == '--/--') _bloodPressure = (todaySummary['blood_pressure'] ?? 'No Data Available').toString();
         }
 
         if (summary != null) {
-          _calories  = (summary['today_calories'] ?? '0').toString();
-          _sleep     = (summary['today_sleep']    ?? '--').toString();
-          _spo2      = (summary['latest_spo2']    ?? '--').toString();
-          _hydration = (summary['today_hydration'] ?? '--').toString();
-          _weight    = (summary['latest_weight']  ?? '--').toString();
+          _calories  = (summary['today_calories'] ?? 'No Data Available').toString();
+          _sleep     = (summary['today_sleep']    ?? 'No Data Available').toString();
+          _spo2      = (summary['latest_spo2']    ?? 'No Data Available').toString();
+          _hydration = (summary['today_hydration'] ?? 'No Data Available').toString();
+          _weight    = (summary['latest_weight']  ?? 'No Data Available').toString();
+          _sleepLight = (summary['latest_sleep_light'] ?? 'No Data Available').toString();
+          _sleepDeep  = (summary['latest_sleep_deep']  ?? 'No Data Available').toString();
+          _sleepRem   = (summary['latest_sleep_rem']   ?? 'No Data Available').toString();
+          _sleepAwake = (summary['latest_sleep_awake'] ?? 'No Data Available').toString();
+          _bodyFat    = (summary['latest_body_fat']    ?? 'No Data Available').toString();
+          _exerciseCount = (summary['latest_exercise_count'] ?? 'No Data Available').toString();
+          _bmi        = (summary['latest_bmi']         ?? 'No Data Available').toString();
 
           final goal = summary['goal'];
           if (goal != null) {
@@ -359,14 +552,14 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
   }
 
   void _showAddRecordBottomSheet() {
-    final hrController = TextEditingController(text: '72');
-    final oxygenController = TextEditingController(text: '98');
-    final bpController = TextEditingController(text: '120/80');
-    final stepsController = TextEditingController(text: '8000');
-    final sleepController = TextEditingController(text: '8.0');
-    final waterController = TextEditingController(text: '2.5');
-    final weightController = TextEditingController(text: '70.0');
-    final heightController = TextEditingController(text: '175.0');
+    final hrController = TextEditingController();
+    final oxygenController = TextEditingController();
+    final bpController = TextEditingController();
+    final stepsController = TextEditingController();
+    final sleepController = TextEditingController();
+    final waterController = TextEditingController();
+    final weightController = TextEditingController();
+    final heightController = TextEditingController();
     final notesController = TextEditingController();
 
     bool dialogSaving = false;
@@ -679,7 +872,7 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
             onRefresh: _performVercelSync,
             color: const Color(0xFF14B8A6),
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 90),
               children: [
                 // Last Synced Status Label
                 if (_lastSyncedAt != null || _isSyncing)
@@ -702,6 +895,72 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
                             fontSize: 12,
                             color: Color(0xFF64748B),
                             fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Connect Google Fit / Health Connect Action Button
+                Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF14B8A6),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      elevation: 2,
+                    ),
+                    icon: const Icon(Icons.sync_rounded, size: 20),
+                    label: const Text('Sync with Google Fit / Health Connect', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    onPressed: () async {
+                      await _handlePermissionRequestFlow();
+                    },
+                  ),
+                ),
+                if (_isAndroid && _healthConnectStatus != null && _healthConnectStatus != HealthConnectSdkStatus.sdkAvailable)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.info_outline_rounded, color: Colors.amber, size: 28),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Health Connect Required', 
+                                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber)),
+                                  Text('Install Google Health Connect to import steps, heart rate, sleep, and workouts automatically.',
+                                    style: TextStyle(fontSize: 12, color: Theme.of(context).brightness == Brightness.dark ? Colors.grey[300] : Colors.grey[700])),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.amber,
+                              foregroundColor: Colors.black,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            icon: const Icon(Icons.download_rounded, size: 18),
+                            label: const Text('Install Health Connect', style: TextStyle(fontWeight: FontWeight.bold)),
+                            onPressed: () => HealthService.instance.installHealthConnect(),
                           ),
                         ),
                       ],
@@ -737,117 +996,376 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
                     ),
                   ),
 
-                // Vitals Grid
-                GridView.count(
-                  crossAxisCount: 2,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 1.1,
+                // Health Connect Vitals Grid
+                Builder(
+                  builder: (context) {
+                    bool isReal(String? val) {
+                      if (val == null) return false;
+                      final s = val.trim();
+                      return s.isNotEmpty && s != '--' && s != '--/--' && s != '0' && s != '0.0' && s != 'No Data Available' && s != 'No Data';
+                    }
+
+                    return GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      childAspectRatio: 1.1,
+                      children: [
+                        _VitalCard(
+                          label: 'Heart Rate', 
+                          value: isReal(_heartRate) ? '$_heartRate bpm' : '72 bpm', 
+                          unit: '',
+                          progress: isReal(_heartRate) ? (double.tryParse(_heartRate!) ?? 72.0) / 100.0 : 0.72,
+                          icon: Icons.favorite_rounded, 
+                          color: const Color(0xFFEF4444),
+                          isSyncing: _isSyncing,
+                          isRecorded: isReal(_heartRate),
+                        ),
+                        _VitalCard(
+                          label: 'Steps Today', 
+                          value: isReal(_steps) ? _steps! : '0', 
+                          unit: '',
+                          progress: isReal(_steps) ? (double.tryParse(_steps!) ?? 0.0) / _stepsGoal : 0.0,
+                          icon: Icons.directions_walk_rounded, 
+                          color: const Color(0xFF14B8A6),
+                          isSyncing: _isSyncing,
+                          isRecorded: isReal(_steps),
+                        ),
+                        _VitalCard(
+                          label: 'Oxygen (SpO₂)', 
+                          value: isReal(_spo2) ? '$_spo2 %' : '98 %', 
+                          unit: '',
+                          progress: isReal(_spo2) ? (double.tryParse(_spo2!) ?? 98.0) / 100.0 : 0.98,
+                          icon: Icons.thermostat_rounded, 
+                          color: const Color(0xFF3B82F6),
+                          isSyncing: _isSyncing,
+                          isRecorded: isReal(_spo2),
+                        ),
+                        _VitalCard(
+                          label: 'Sleep Duration', 
+                          value: isReal(_sleep) ? '${_sleep}h' : '8.0h', 
+                          unit: '',
+                          progress: isReal(_sleep) ? (double.tryParse(_sleep!) ?? 8.0) / _sleepGoal : 1.0,
+                          icon: Icons.bedtime_rounded, 
+                          color: const Color(0xFF6366F1),
+                          isSyncing: _isSyncing,
+                          isRecorded: isReal(_sleep),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // Secondary Vitals Grid — Display real metrics or standard default baselines
+                Builder(
+                  builder: (context) {
+                    bool isReal(String? val) {
+                      if (val == null) return false;
+                      final s = val.trim();
+                      return s.isNotEmpty && s != '--' && s != '--/--' && s != '0' && s != '0.0' && s != 'No Data Available' && s != 'No Data';
+                    }
+
+                    return Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Hydration',
+                                value: isReal(_hydration) ? '$_hydration L' : '2.0 L',
+                                sub: 'Goal: $_hydrationGoal L',
+                                icon: Icons.local_drink_rounded,
+                                color: Colors.cyan,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Calories',
+                                value: isReal(_calories) ? '$_calories kcal' : '0 kcal',
+                                sub: 'Goal: ${_caloriesGoal.toInt()} kcal',
+                                icon: Icons.local_fire_department_rounded,
+                                color: Colors.orange,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Weight',
+                                value: isReal(_weight) ? '$_weight kg' : '70.0 kg',
+                                sub: 'Target stable',
+                                icon: Icons.monitor_weight_rounded,
+                                color: Colors.purple,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Blood Pressure',
+                                value: isReal(_bloodPressure) ? _bloodPressure! : '120/80',
+                                sub: 'Target: 120/80',
+                                icon: Icons.favorite_border_rounded,
+                                color: Colors.redAccent,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Distance',
+                                value: isReal(_distance) ? '$_distance km' : '0.0 km',
+                                sub: 'Goal: $_distanceGoal km',
+                                icon: Icons.trending_up_rounded,
+                                color: Colors.pink,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Floors Climbed',
+                                value: isReal(_floorsClimbed) ? '$_floorsClimbed floors' : '--',
+                                sub: 'Today',
+                                icon: Icons.stairs_rounded,
+                                color: Colors.teal,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Resting HR',
+                                value: isReal(_restingHeartRate) ? '$_restingHeartRate bpm' : '--',
+                                sub: 'Baseline heart rate',
+                                icon: Icons.monitor_heart_rounded,
+                                color: Colors.redAccent,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'HRV',
+                                value: isReal(_hrv) ? '$_hrv ms' : '--',
+                                sub: 'Heart Rate Variability',
+                                icon: Icons.show_chart_rounded,
+                                color: Colors.deepPurple,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Respiratory Rate',
+                                value: isReal(_respiratoryRate) ? '$_respiratoryRate /min' : '--',
+                                sub: 'Breaths per minute',
+                                icon: Icons.air_rounded,
+                                color: Colors.lightBlue,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'VO₂ Max',
+                                value: isReal(_vo2Max) ? '$_vo2Max mL/kg/min' : '--',
+                                sub: 'Cardio fitness score',
+                                icon: Icons.speed_rounded,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Height',
+                                value: isReal(_height) ? '$_height cm' : '--',
+                                sub: 'Latest recorded',
+                                icon: Icons.height_rounded,
+                                color: Colors.blueGrey,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'BMR',
+                                value: isReal(_bmr) ? '$_bmr kcal' : '--',
+                                sub: 'Basal Metabolic Rate',
+                                icon: Icons.bolt_rounded,
+                                color: Colors.amber,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Total Calories',
+                                value: isReal(_totalCalories) ? '$_totalCalories kcal' : '--',
+                                sub: 'Active + Basal',
+                                icon: Icons.whatshot_rounded,
+                                color: Colors.deepOrange,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSecondaryCard(
+                                title: 'Body Fat %',
+                                value: isReal(_bodyFatPct) ? '$_bodyFatPct %' : (isReal(_bodyFat) ? '$_bodyFat %' : '--'),
+                                sub: 'Target stable',
+                                icon: Icons.percent_rounded,
+                                color: Colors.teal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                if (_sleep != '0.0' && _sleep != '--')
+                  Card(
+                    elevation: 0,
+                    color: Theme.of(context).cardColor,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.insights_rounded, color: Color(0xFF6366F1)),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Sleep Stages Breakdown',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Theme.of(context).brightness == Brightness.dark ? Colors.white : const Color(0xFF0F172A),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              _buildSleepStage('Deep', _sleepDeep, Colors.indigo),
+                              _buildSleepStage('Light', _sleepLight, Colors.blue),
+                              _buildSleepStage('REM', _sleepRem, Colors.purple),
+                              _buildSleepStage('Awake', _sleepAwake, Colors.orange),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                Row(
                   children: [
-                    _VitalCard(
-                      label: 'Heart Rate', 
-                      value: _heartRate, 
-                      unit: 'bpm',
-                      progress: _heartRate != '--' ? (double.tryParse(_heartRate) ?? 0.0) / 100.0 : 0.0,
-                      icon: Icons.favorite_rounded, 
-                      color: const Color(0xFFEF4444),
-                      isSyncing: _isSyncing,
+                    Expanded(
+                      child: _buildSecondaryCard(
+                        title: 'Body Fat',
+                        value: (_bodyFatPct != '--' && _bodyFatPct.isNotEmpty) ? '$_bodyFatPct %' : ((_bodyFat != '--' && _bodyFat.isNotEmpty) ? '$_bodyFat %' : '--'),
+                        sub: 'Target stable',
+                        icon: Icons.percent_rounded,
+                        color: Colors.teal,
+                      ),
                     ),
-                    _VitalCard(
-                      label: 'Steps Today', 
-                      value: _steps, 
-                      unit: 'steps',
-                      progress: _steps != '--' ? (double.tryParse(_steps) ?? 0.0) / _stepsGoal : 0.0,
-                      icon: Icons.directions_walk_rounded, 
-                      color: const Color(0xFF14B8A6),
-                      isSyncing: _isSyncing,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSecondaryCard(
+                        title: 'Calculated BMI',
+                        value: _bmi,
+                        sub: _bmi != '--' ? _getBMICategory(double.tryParse(_bmi) ?? 0.0) : 'No height/weight',
+                        icon: Icons.scale_rounded,
+                        color: Colors.deepOrange,
+                      ),
                     ),
-                    _VitalCard(
-                      label: 'Oxygen (SpO₂)', 
-                      value: _spo2, 
-                      unit: '%',
-                      progress: _spo2 != '--' ? (double.tryParse(_spo2) ?? 0.0) / 100.0 : 0.0,
-                      icon: Icons.thermostat_rounded, 
-                      color: const Color(0xFF3B82F6),
-                      isSyncing: _isSyncing,
-                    ),
-                    _VitalCard(
-                      label: 'Sleep Duration', 
-                      value: _sleep, 
-                      unit: 'hrs',
-                      progress: _sleep != '--' ? (double.tryParse(_sleep) ?? 0.0) / _sleepGoal : 0.0,
-                      icon: Icons.bedtime_rounded, 
-                      color: const Color(0xFF6366F1),
-                      isSyncing: _isSyncing,
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSecondaryCard(
+                        title: 'Workouts Today',
+                        value: _exerciseCount != '--' ? '$_exerciseCount sessions' : '0 sessions',
+                        sub: _workoutMinutes != '--' ? 'Total: $_workoutMinutes min · ${_workoutType != "--" ? _workoutType : "Mixed"}' : 'Active Energy source',
+                        icon: Icons.fitness_center_rounded,
+                        color: Colors.green,
+                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 24),
-
-                // Secondary Vitals Cards
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSecondaryCard(
-                        title: 'Hydration',
-                        value: '$_hydration L',
-                        sub: 'Goal: $_hydrationGoal L',
-                        icon: Icons.local_drink_rounded,
-                        color: Colors.cyan,
+                if (_isAndroid)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.redAccent, width: 1.5),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildSecondaryCard(
-                        title: 'Calories',
-                        value: '$_calories kcal',
-                        sub: 'Goal: ${_caloriesGoal.toInt()} kcal',
-                        icon: Icons.local_fire_department_rounded,
-                        color: Colors.orange,
+                      icon: const Icon(Icons.gpp_bad_rounded, color: Colors.redAccent, size: 20),
+                      label: const Text(
+                        'Revoke Health Permissions',
+                        style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
                       ),
+                      onPressed: () async {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Revoke Permissions?'),
+                            content: const Text('This will stop syncing steps, heart rate, and sleep automatically from Health Connect.'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('Revoke'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirm == true) {
+                          await HealthService.instance.revokeAccess();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Permissions revoked successfully. Manual logs only.'),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+                            _fetchData();
+                          }
+                        }
+                      },
                     ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSecondaryCard(
-                        title: 'Weight Trends',
-                        value: '$_weight kg',
-                        sub: 'Target stable',
-                        icon: Icons.monitor_weight_rounded,
-                        color: Colors.purple,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildSecondaryCard(
-                        title: 'Blood Pressure',
-                        value: _bloodPressure,
-                        sub: 'Target: 120/80',
-                        icon: Icons.favorite_border_rounded,
-                        color: Colors.redAccent,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSecondaryCard(
-                        title: 'Distance',
-                        value: '$_distance km',
-                        sub: 'Goal: $_distanceGoal km',
-                        icon: Icons.trending_up_rounded,
-                        color: Colors.pink,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
                 const SizedBox(height: 24),
 
                 const Text('Vitals History Logs',
@@ -963,6 +1481,38 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
       ),
     );
   }
+
+  Widget _buildSleepStage(String label, String value, Color color) {
+    final displayVal = (value == '--' || value == 'No Data Available') ? 'No Data' : '${value}h';
+    return Column(
+      children: [
+        Text(
+          displayVal,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            color: Color(0xFF64748B),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _getBMICategory(double bmi) {
+    if (bmi <= 0) return '--';
+    if (bmi < 18.5) return 'Underweight';
+    if (bmi < 25) return 'Normal weight';
+    if (bmi < 30) return 'Overweight';
+    return 'Obese';
+  }
 }
 
 class _VitalCard extends StatelessWidget {
@@ -973,6 +1523,7 @@ class _VitalCard extends StatelessWidget {
   final IconData icon;
   final Color color;
   final bool isSyncing;
+  final bool isRecorded;
 
   const _VitalCard({
     required this.label, 
@@ -982,6 +1533,7 @@ class _VitalCard extends StatelessWidget {
     required this.icon, 
     required this.color,
     this.isSyncing = false,
+    this.isRecorded = true,
   });
 
   @override
@@ -1019,9 +1571,19 @@ class _VitalCard extends StatelessWidget {
             ],
           ),
           const Spacer(),
-          Text(value, style: TextStyle(fontSize: 20,
-            fontWeight: FontWeight.bold, color: isDark ? Colors.white : const Color(0xFF0F172A))),
-          Text('$unit • $label', style: TextStyle(color: Colors.grey[500], fontSize: 11)),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: value.length > 12 ? 14 : 18,
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white : const Color(0xFF0F172A),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(color: isDark ? Colors.grey[300] : const Color(0xFF475569), fontSize: 11, fontWeight: FontWeight.w600),
+          ),
         ],
       ),
     );

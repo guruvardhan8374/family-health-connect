@@ -56,8 +56,8 @@ class SOSAlertViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def trigger(self, request):
-        lat = request.data.get('latitude')
-        lng = request.data.get('longitude')
+        lat = request.data.get('latitude') or request.data.get('location_lat')
+        lng = request.data.get('longitude') or request.data.get('location_lng')
         message = request.data.get('message', 'Emergency! I need help immediately.')
         
         vitals = get_vitals_snapshot(request.user)

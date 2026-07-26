@@ -35,6 +35,15 @@ class HealthSnapshot(models.Model):
     blood_pressure  = models.CharField(max_length=20, null=True, blank=True, help_text='e.g. 120/80')
     notes           = models.TextField(blank=True, default='')
 
+    # Extended metrics
+    sleep_light     = models.FloatField(null=True, blank=True, help_text='hours of light sleep')
+    sleep_deep      = models.FloatField(null=True, blank=True, help_text='hours of deep sleep')
+    sleep_rem       = models.FloatField(null=True, blank=True, help_text='hours of REM sleep')
+    sleep_awake     = models.FloatField(null=True, blank=True, help_text='hours of awake time')
+    body_fat        = models.FloatField(null=True, blank=True, help_text='body fat %')
+    exercise_count  = models.IntegerField(default=0, help_text='number of exercise sessions')
+    device_name     = models.CharField(max_length=100, blank=True, default='')
+
     class Meta:
         ordering = ['-recorded_at']
         indexes = [
@@ -106,6 +115,9 @@ class HealthAlert(models.Model):
         ('LOW_SPO2', 'Low Blood Oxygen'),
         ('INACTIVITY', 'Extended Inactivity'),
         ('GENERAL', 'General Alert'),
+        ('HIGH_BP', 'High Blood Pressure'),
+        ('LOW_STEPS', 'Missed Step Goal'),
+        ('POOR_SLEEP', 'Poor Sleep'),
     )
     SEVERITY = (
         ('INFO', 'Info'),

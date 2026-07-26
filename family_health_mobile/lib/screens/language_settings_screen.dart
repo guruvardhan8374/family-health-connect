@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/translation_service.dart';
 
 class LanguageSettingsScreen extends StatefulWidget {
   const LanguageSettingsScreen({super.key});
@@ -37,9 +38,11 @@ class _LanguageSettingsScreenState extends State<LanguageSettingsScreen> {
 
   Future<void> _updateLanguage(String langCode) async {
     setState(() => _selectedLang = langCode);
-    final success = await ApiService.updateProfileSettings({
+    await TranslationService.instance.setLocale(langCode);
+    final res = await ApiService.updateProfileSettings({
       'preferred_language': langCode,
     });
+    final success = res['success'] == true;
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

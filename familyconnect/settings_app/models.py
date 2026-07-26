@@ -8,7 +8,7 @@ class UserProfileSettings(models.Model):
         on_delete=models.CASCADE,
         related_name='profile_settings'
     )
-    profile_picture = models.URLField(blank=True, null=True)
+    profile_picture = models.TextField(blank=True, null=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     bio = models.TextField(blank=True, null=True)
     emergency_contact = models.CharField(max_length=100, blank=True, null=True)
@@ -68,6 +68,15 @@ class PrivacySettings(models.Model):
     emergency_visibility = models.CharField(
         max_length=10, choices=VISIBILITY_CHOICES, default='FAMILY'
     )
+
+    # Granular health metrics visibility settings
+    share_heart_rate      = models.BooleanField(default=True)
+    share_steps           = models.BooleanField(default=True)
+    share_calories        = models.BooleanField(default=True)
+    share_sleep           = models.BooleanField(default=True)
+    share_spo2            = models.BooleanField(default=True)
+    share_weight          = models.BooleanField(default=True)
+    share_blood_pressure  = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

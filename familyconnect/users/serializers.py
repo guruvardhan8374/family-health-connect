@@ -12,14 +12,42 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'is_otp_verified', 'role']
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    bio = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    emergency_contact = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    date_of_birth = serializers.DateField(required=False, allow_null=True, input_formats=['%Y-%m-%d', '%Y/%m/%d', '%d-%m-%Y', '%d/%m/%Y', 'iso-8601'])
+
     class Meta:
         model = CustomUser
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name', 'phone_number', 
             'profile_picture', 'role', 'is_otp_verified', 'date_of_birth', 'gender', 
-            'blood_group', 'address', 'emergency_phone'
+            'blood_group', 'address', 'bio', 'emergency_contact', 'emergency_phone'
         ]
-        read_only_fields = ['id', 'username', 'email', 'role', 'is_otp_verified']
+        read_only_fields = ['id', 'email', 'role', 'is_otp_verified']
+
+    def update(self, instance, validated_data):
+        username = validated_data.pop('username', None)
+        if username and username != instance.username:
+            if CustomUser.objects.filter(username=username).exclude(id=instance.id).exists():
+                raise serializers.ValidationError({"username": "This username is already taken."})
+            instance.username = username
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        # Keep UserProfileSettings in full sync
+        try:
+            from settings_app.models import UserProfileSettings
+            profile_settings, _ = UserProfileSettings.objects.get_or_create(user=instance)
+            for attr in ['profile_picture', 'phone_number', 'bio', 'emergency_contact', 'emergency_phone', 'date_of_birth', 'gender', 'blood_group', 'address']:
+                if hasattr(instance, attr):
+                    setattr(profile_settings, attr, getattr(instance, attr))
+            profile_settings.save()
+        except Exception as e:
+            pass
+
+        return instance
 
 class UserSettingsSerializer(serializers.ModelSerializer):
     class Meta:
@@ -67,5 +95,5 @@ class RegisterSerializer(serializers.ModelSerializer):
 class LocationHistorySerializer(serializers.ModelSerializer):
     class Meta:
         model = LocationHistory
-        fields = ['id', 'user', 'latitude', 'longitude', 'timestamp']
-        read_only_fields = ['id', 'timestamp']
+        fields = ['id', 'user', 'latitude', 'longitude', 'speed', 'battery_level', 'is_moving', 'timestamp']
+        read_only_fields = ['id', 'timestamp', 'user']

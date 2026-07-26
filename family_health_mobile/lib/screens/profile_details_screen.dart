@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
@@ -26,7 +26,8 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
   final _addressController = TextEditingController();
   final _picController = TextEditingController();
 
-  File? _localImageFile;
+  Uint8List? _localImageBytes;
+  String? _localImageName;
   final ImagePicker _picker = ImagePicker();
 
   @override
@@ -52,6 +53,8 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
     setState(() => _isLoading = false);
   }
 
+  String? _localImagePath;
+
   Future<void> _pickImage(ImageSource source) async {
     try {
       final pickedFile = await _picker.pickImage(
@@ -61,12 +64,16 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         imageQuality: 85,
       );
       if (pickedFile != null) {
+        final bytes = await pickedFile.readAsBytes();
+        debugPrint('[ProfilePicker] Selected image path: ${pickedFile.path}, name: ${pickedFile.name}, size: ${bytes.length} bytes');
         setState(() {
-          _localImageFile = File(pickedFile.path);
+          _localImageBytes = bytes;
+          _localImageName = pickedFile.name;
+          _localImagePath = pickedFile.path;
         });
       }
     } catch (e) {
-      debugPrint('Error picking image: $e');
+      debugPrint('[ProfilePicker] Error picking image: $e');
     }
   }
 
@@ -85,7 +92,9 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       );
       if (success) {
         setState(() {
-          _localImageFile = null;
+          _localImageBytes = null;
+          _localImageName = null;
+          _localImagePath = null;
           _picController.clear();
         });
       }
@@ -97,8 +106,13 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
     setState(() => _isSaving = true);
 
     // Upload avatar if a new one was selected locally
-    if (_localImageFile != null) {
-      final uploadRes = await ApiService.uploadAvatar(_localImageFile!);
+    if (_localImageBytes != null) {
+      final fileName = _localImageName ?? 'avatar.jpg';
+      final uploadRes = await ApiService.uploadAvatarBytes(
+        _localImageBytes!,
+        fileName,
+        filePath: _localImagePath,
+      );
       if (uploadRes != null && uploadRes['profile_picture'] != null) {
         _picController.text = uploadRes['profile_picture'].toString();
       } else {
@@ -116,32 +130,42 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       }
     }
 
+    final String dobText = _dobController.text.trim();
     final Map<String, dynamic> data = {
       'username': _usernameController.text.trim(),
       'phone_number': _phoneController.text.trim(),
       'bio': _bioController.text.trim(),
       'emergency_contact': _emergencyContactController.text.trim(),
       'emergency_phone': _emergencyPhoneController.text.trim(),
-      'date_of_birth': _dobController.text.trim().isEmpty ? null : _dobController.text.trim(),
+      'date_of_birth': dobText.isEmpty ? null : dobText,
       'gender': _genderController.text.trim(),
       'blood_group': _bloodGroupController.text.trim(),
       'address': _addressController.text.trim(),
       'profile_picture': _picController.text.trim().isEmpty ? null : _picController.text.trim(),
     };
 
-    final success = await ApiService.updateProfileSettings(data);
+    debugPrint('[ProfileScreen] Invoking updateProfileSettings with payload: $data');
+    final result = await ApiService.updateProfileSettings(data);
     setState(() => _isSaving = false);
+
+    final bool success = result['success'] == true;
+    final String? errorMsg = result['error'] as String?;
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(success ? '✅ Profile updated successfully!' : '❌ Failed to update profile settings.'),
+          content: Text(success ? '✅ Profile updated successfully!' : '❌ ${errorMsg ?? "Failed to update profile"}'),
           backgroundColor: success ? Colors.green : Colors.red,
           behavior: SnackBarBehavior.floating,
         ),
       );
       if (success) {
-        Navigator.pop(context);
+        setState(() {
+          _localImageBytes = null;
+          _localImageName = null;
+          _localImagePath = null;
+        });
+        Navigator.pop(context, true);
       }
     }
   }
@@ -188,12 +212,12 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                             CircleAvatar(
                               radius: 55,
                               backgroundColor: const Color(0xFF14B8A6).withOpacity(0.1),
-                              backgroundImage: _localImageFile != null
-                                  ? FileImage(_localImageFile!) as ImageProvider
+                              backgroundImage: _localImageBytes != null
+                                  ? MemoryImage(_localImageBytes!) as ImageProvider
                                   : (_picController.text.isNotEmpty
-                                      ? NetworkImage(_picController.text)
+                                      ? NetworkImage(ApiService.normalizeImageUrl(_picController.text))
                                       : null),
-                              child: _localImageFile == null && _picController.text.isEmpty
+                              child: _localImageBytes == null && _picController.text.isEmpty
                                   ? const Icon(Icons.person_rounded, size: 55, color: Color(0xFF14B8A6))
                                   : null,
                             ),
@@ -223,7 +247,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                                               _pickImage(ImageSource.gallery);
                                             },
                                           ),
-                                          if (_picController.text.isNotEmpty || _localImageFile != null)
+                                          if (_picController.text.isNotEmpty || _localImageBytes != null)
                                             ListTile(
                                               leading: const Icon(Icons.delete_outline_rounded, color: Colors.red),
                                               title: const Text('Remove Current Photo', style: TextStyle(color: Colors.red)),
@@ -237,6 +261,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                                     ),
                                   );
                                 },
+
                                 child: Container(
                                   padding: const EdgeInsets.all(8),
                                   decoration: const BoxDecoration(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
@@ -14,10 +15,14 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   List<Map<String, dynamic>> _policeStations = [];
   bool _isLoadingPolice = true;
 
+  // Emergency contacts added by user (name + phone)
+  final List<Map<String, String>> _emergencyContacts = [];
+
   @override
   void initState() {
     super.initState();
     _loadNearbyPolice();
+    _loadFamilyAsContacts();
   }
 
   Future<void> _loadNearbyPolice() async {
@@ -31,6 +36,101 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
         _isLoadingPolice = false;
       });
     }
+  }
+
+  /// Pre-populate with family members fetched from API
+  Future<void> _loadFamilyAsContacts() async {
+    try {
+      final members = await ApiService.getFamilyMembers();
+      if (mounted) {
+        setState(() {
+          for (final m in members) {
+            final name = (m['full_name'] ?? m['username'] ?? '').toString().trim();
+            final phone = (m['phone'] ?? '').toString().trim();
+            if (name.isNotEmpty && !_emergencyContacts.any((c) => c['name'] == name)) {
+              _emergencyContacts.add({'name': name, 'phone': phone.isNotEmpty ? phone : '—'});
+            }
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _showAddContactDialog() {
+    final nameCtrl  = TextEditingController();
+    final phoneCtrl = TextEditingController();
+    final formKey   = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.person_add_rounded, color: Color(0xFF14B8A6)),
+            SizedBox(width: 8),
+            Text('Add Emergency Contact', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+          ],
+        ),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: nameCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Full Name',
+                  prefixIcon: const Icon(Icons.person_outline_rounded),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter a name' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: phoneCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: InputDecoration(
+                  labelText: 'Phone Number',
+                  prefixIcon: const Icon(Icons.phone_outlined),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter a phone number' : null,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF64748B))),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF14B8A6),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            icon: const Icon(Icons.add_rounded, color: Colors.white),
+            label: const Text('Add', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                setState(() {
+                  _emergencyContacts.add({
+                    'name': nameCtrl.text.trim(),
+                    'phone': phoneCtrl.text.trim(),
+                  });
+                });
+                Navigator.pop(ctx);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _removeContact(int index) {
+    setState(() => _emergencyContacts.removeAt(index));
   }
 
   @override
@@ -196,66 +296,106 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
 
           const SizedBox(height: 16),
 
-          // Emergency contacts
-          const Text('Emergency Contacts',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          // ─── EMERGENCY CONTACTS (user-managed) ───────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Emergency Contacts',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF14B8A6),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                icon: const Icon(Icons.person_add_rounded, size: 16),
+                label: const Text('Add User', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                onPressed: _showAddContactDialog,
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
-          ...[
-            {'name': 'Mom', 'phone': '+919876543210', 'type': 'Family'},
-            {'name': 'Dad', 'phone': '+919876543211', 'type': 'Family'},
-            {'name': 'Ambulance', 'phone': '108', 'type': 'Emergency'},
-            {'name': 'Police Control Room', 'phone': '100', 'type': 'Emergency'},
-          ].map((contact) => Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: contact['type'] == 'Emergency'
-                      ? const Color(0xFFEF4444).withValues(alpha: 0.1)
-                      : const Color(0xFF14B8A6).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    contact['type'] == 'Emergency'
-                      ? Icons.emergency_rounded : Icons.person_rounded,
-                    color: contact['type'] == 'Emergency'
-                      ? const Color(0xFFEF4444) : const Color(0xFF14B8A6),
-                    size: 20,
-                  ),
+
+          if (_emergencyContacts.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E293B) : Colors.grey[50],
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade200),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.group_add_rounded, size: 40, color: Colors.grey[400]),
+                  const SizedBox(height: 8),
+                  Text('No emergency contacts added yet.',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+                  const SizedBox(height: 4),
+                  Text('Tap "Add User" to add someone.',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+                ],
+              ),
+            )
+          else
+            ...List.generate(_emergencyContacts.length, (index) {
+              final contact = _emergencyContacts[index];
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(contact['name']!,
-                        style: TextStyle(fontWeight: FontWeight.bold,
-                          color: isDark ? Colors.white : const Color(0xFF0F172A))),
-                      Text(contact['phone']!,
-                        style: TextStyle(color: Colors.grey[500], fontSize: 13)),
-                    ],
-                  ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF14B8A6).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.person_rounded, color: Color(0xFF14B8A6), size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(contact['name']!,
+                            style: TextStyle(fontWeight: FontWeight.bold,
+                              color: isDark ? Colors.white : const Color(0xFF0F172A))),
+                          Text(contact['phone']!,
+                            style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    // Call button
+                    IconButton(
+                      icon: const Icon(Icons.call_rounded, color: Color(0xFF14B8A6)),
+                      tooltip: 'Call',
+                      onPressed: () async {
+                        final phone = contact['phone']!;
+                        if (phone == '—') return;
+                        final telUrl = Uri.parse('tel:$phone');
+                        if (await canLaunchUrl(telUrl)) {
+                          await launchUrl(telUrl);
+                        }
+                      },
+                    ),
+                    // Delete button
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                      tooltip: 'Remove',
+                      onPressed: () => _removeContact(index),
+                    ),
+                  ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.call_rounded, color: Color(0xFF14B8A6)),
-                  onPressed: () async {
-                    final telUrl = Uri.parse('tel:${contact['phone']}');
-                    if (await canLaunchUrl(telUrl)) {
-                      await launchUrl(telUrl);
-                    }
-                  },
-                ),
-              ],
-            ),
-          )),
+              );
+            }),
+
           const SizedBox(height: 80),
         ],
       ),
@@ -289,17 +429,26 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
             onPressed: () async {
               Navigator.pop(ctx);
 
-              // Fetch real GPS position
-              final position = await LocationService.getCurrentPosition();
-              final double lat = position?.latitude ?? 0.0;
-              final double lng = position?.longitude ?? 0.0;
-
-              // Save current location to the user's history
-              if (position != null) {
-                await ApiService.updateLocation(lat: lat, lng: lng);
+              // Fetch real GPS position with timeout fallback so it never hangs
+              Position? position;
+              try {
+                position = await LocationService.getCurrentPosition().timeout(
+                  const Duration(seconds: 4),
+                  onTimeout: () => null,
+                );
+              } catch (_) {
+                position = null;
               }
 
-              // Call API with real coordinates
+              final double? lat = position?.latitude;
+              final double? lng = position?.longitude;
+
+              // Save current location to the user's history if obtained
+              if (lat != null && lng != null) {
+                ApiService.updateLocation(lat: lat, lng: lng);
+              }
+
+              // Call API with coordinates (or nulls if unavailable)
               final success = await ApiService.triggerSOS(lat: lat, lng: lng);
 
               if (context.mounted) {
@@ -318,4 +467,3 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     );
   }
 }
-

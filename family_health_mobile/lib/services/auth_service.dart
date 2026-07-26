@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'api_service.dart';
 
 class AuthService {
   static const String _tokenKey       = 'access_token';
@@ -65,6 +66,9 @@ class AuthService {
       prefs.setString(_authProviderKey, authProvider),
       if (refreshToken != null) prefs.setString(_refreshKey, refreshToken),
     ]);
+
+    // Clear all memory caches on login to drop any stale data from previous sessions
+    ApiService.clearAllCaches();
 
     isLoggedInNotifier.value = true;
   }
@@ -160,6 +164,10 @@ class AuthService {
 
     final prefs = await _getPrefs();
     await prefs.clear();
+    
+    // Clear all memory caches on logout
+    ApiService.clearAllCaches();
+
     isLoggedInNotifier.value = false;
   }
 }

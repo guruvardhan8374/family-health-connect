@@ -1,15 +1,12 @@
+import 'package:flutter/foundation.dart';
+
 class AppConfig {
-  // ─── PRODUCTION (Render cloud) ────────────────────────────────────────────
-  // Live cloud backend shared by both React Web App & Flutter Mobile App
-  static const String productionUrl = 'https://guruvardhan-fhc-backend.onrender.com';
+  // Active Local Development API URL pointing to localhost via ADB USB reverse port forwarding
+  static const String _activeUrl = 'http://192.168.1.6:8000';
 
-  // ─── LOCAL DEVELOPMENT ────────────────────────────────────────────────────
-  static const String localUrl = 'http://10.218.104.94:8000';
+  static String get apiBaseUrl => _activeUrl;
 
-  // ─── ACTIVE URL ───────────────────────────────────────────────────────────
-  // Default to productionUrl so both Web and Mobile use the exact same cloud DB
-  static const String apiBaseUrl = String.fromEnvironment(
-    'API_URL',
-    defaultValue: productionUrl,
-  );
+  static Future<void> initialize() async {
+    debugPrint('[AppConfig] Static local configuration active. Using API URL: $apiBaseUrl');
+  }
 }

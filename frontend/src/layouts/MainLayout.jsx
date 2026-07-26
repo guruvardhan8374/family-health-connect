@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -12,6 +12,7 @@ export default function MainLayout() {
   const [activeSOS, setActiveSOS] = useState(null);
   const navigate = useNavigate();
   const { refreshUser } = useAuth();
+  const dismissedAlerts = useRef(new Set());
 
   useSyncEvent('profile.picture_updated', (event) => {
     refreshUser();
@@ -22,14 +23,16 @@ export default function MainLayout() {
       if (event.data.status === 'RESOLVED' || event.data.status === 'FALSE_ALARM' || event.data.is_resolved) {
         setActiveSOS((prev) => (prev && prev.id === event.data.id ? null : prev));
       } else {
-        setActiveSOS({
-          id: event.data.id,
-          message: event.data.message || 'Emergency! I need help immediately.',
-          triggeredBy: event.data.triggered_by || 'Family Member',
-          lat: event.data.location_lat,
-          lng: event.data.location_lng,
-          googleMapsLink: event.data.google_maps_link || `https://www.google.com/maps/search/?api=1&query=${event.data.location_lat},${event.data.location_lng}`
-        });
+        if (!dismissedAlerts.current.has(event.data.id)) {
+          setActiveSOS({
+            id: event.data.id,
+            message: event.data.message || 'Emergency! I need help immediately.',
+            triggeredBy: event.data.triggered_by || 'Family Member',
+            lat: event.data.location_lat,
+            lng: event.data.location_lng,
+            googleMapsLink: event.data.google_maps_link || `https://www.google.com/maps/search/?api=1&query=${event.data.location_lat},${event.data.location_lng}`
+          });
+        }
       }
     }
   });
@@ -57,6 +60,38 @@ export default function MainLayout() {
     onMessageListener().then(payload => {
       console.log('New Message Received: ', payload);
     });
+
+    // ── Poll for active SOS alerts on load + every 15s as WebSocket fallback ──
+    const checkActiveSOS = async () => {
+      try {
+        const res = await api.get('/emergency/alerts/active/');
+        const alerts = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+        if (alerts.length > 0) {
+          const alert = alerts[0]; // show the most recent active SOS
+          if (!dismissedAlerts.current.has(alert.id)) {
+            setActiveSOS({
+              id: alert.id,
+              message: alert.message || 'Emergency! I need help immediately.',
+              triggeredBy: alert.user?.username || alert.triggered_by || 'Family Member',
+              lat: alert.location_lat,
+              lng: alert.location_lng,
+              googleMapsLink: alert.google_maps_link ||
+                (alert.location_lat && alert.location_lng
+                  ? `https://www.google.com/maps/search/?api=1&query=${alert.location_lat},${alert.location_lng}`
+                  : null),
+            });
+          }
+        } else {
+          // Clear banner if no active alerts
+          setActiveSOS((prev) => (prev ? null : prev));
+        }
+      } catch (_) {}
+    };
+
+    checkActiveSOS(); // immediate check on mount
+    const pollInterval = setInterval(checkActiveSOS, 15000); // fallback poll every 15s
+
+    return () => clearInterval(pollInterval);
   }, []);
 
   return (
@@ -95,7 +130,12 @@ export default function MainLayout() {
                 Open Protocol
               </button>
               <button 
-                onClick={() => setActiveSOS(null)}
+                onClick={() => {
+                  if (activeSOS) {
+                    dismissedAlerts.current.add(activeSOS.id);
+                  }
+                  setActiveSOS(null);
+                }}
                 className="text-red-200 hover:text-white font-medium text-xs px-2"
               >
                 Dismiss

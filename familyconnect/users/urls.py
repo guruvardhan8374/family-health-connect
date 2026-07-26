@@ -25,5 +25,6 @@ urlpatterns = [
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('register-fcm/', RegisterFCMTokenView.as_view(), name='register-fcm'),
     path('avatar/', AvatarUploadView.as_view(), name='user-avatar'),
+    path('locations/', LocationHistoryViewSet.as_view({'get': 'list', 'post': 'create'}), name='user-locations'),
     path('', include(router.urls)),
 ]

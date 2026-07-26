@@ -45,13 +45,13 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user.check_password(password):
             raise serializers.ValidationError('Invalid password.')
 
-        # ── Email Verification Check ──────────
-        if hasattr(user, 'is_otp_verified') and not user.is_otp_verified:
-            raise serializers.ValidationError({
-                'detail': 'Please verify your email before logging in.',
-                'email_unverified': True,
-                'email': user.email
-            })
+        # ── Email Verification Check ────────── (Bypassed/Removed)
+        # if hasattr(user, 'is_otp_verified') and not user.is_otp_verified:
+        #     raise serializers.ValidationError({
+        #         'detail': 'Please verify your email before logging in.',
+        #         'email_unverified': True,
+        #         'email': user.email
+        #     })
 
         # ── Set self.user directly so parent generate tokens without another lookup
         attrs['username'] = user.username
@@ -64,20 +64,16 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
         data['user_id']  = user.id
         data['username'] = user.username
         data['email']    = user.email
-        data['role']     = getattr(user, 'role', 'MEMBER')
-
-        # Include profile picture / phone from settings (single lightweight query)
+        # Embed family information
         try:
-            from settings_app.models import UserProfileSettings
-            profile = UserProfileSettings.objects.only(
-                'profile_picture', 'phone_number', 'bio'
-            ).filter(user=user).first()
-            data['profile_picture'] = profile.profile_picture if profile else ''
-            data['phone_number']    = profile.phone_number    if profile else ''
-            data['bio']             = profile.bio              if profile else ''
+            from users.views import get_family_info_for_user
+            family_info = get_family_info_for_user(user)
+            data['role']         = family_info['role']
+            data['has_family']   = family_info['has_family']
+            data['family_group'] = family_info if family_info['has_family'] else None
         except Exception:
-            data['profile_picture'] = ''
-            data['phone_number']    = ''
-            data['bio']             = ''
+            data['role']         = getattr(user, 'role', 'MEMBER')
+            data['has_family']   = False
+            data['family_group'] = None
 
         return data

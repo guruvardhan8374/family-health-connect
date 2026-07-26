@@ -33,53 +33,94 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         
-        # Require OTP email verification before logging in
-        user.is_otp_verified = False
-        otp_code = generate_otp()
-        user.otp_code = hash_otp(otp_code)
-        user.otp_created_at = timezone.now()
+        # OTP email verification is disabled/removed. Set verified to True.
+        user.is_otp_verified = True
+        user.otp_code = None
+        user.otp_created_at = None
         user.otp_failed_attempts = 0
         user.save()
-        
-        # Send HTML OTP email
-        send_otp_email(user.email, otp_code)
         
         # Initialize default user settings
         UserSettings.objects.create(user=user)
         
         headers = self.get_success_headers(serializer.data)
         return Response({
-            "message": f"User registered successfully! Verification code: {otp_code}",
+            "message": "User registered successfully!",
             "user": UserSerializer(user).data,
             "email": user.email,
-            "otp": otp_code,
-            "email_unverified": True
+            "otp": None,
+            "email_unverified": False
         }, status=status.HTTP_201_CREATED, headers=headers)
 
 class SecureTokenObtainPairView(TokenObtainPairView):
     serializer_class = EmailTokenObtainPairSerializer
 
+def get_family_info_for_user(user):
+    """
+    Retrieves the user's active family group membership details.
+    """
+    try:
+        from family.models import FamilyMembership
+        membership = FamilyMembership.objects.filter(
+            user=user,
+            is_approved=True
+        ).select_related('family_group').order_by('-joined_at').first()
+
+        if membership and membership.family_group:
+            group = membership.family_group
+            return {
+                'has_family': True,
+                'family_id': group.id,
+                'family_name': group.name,
+                'family_code': group.family_code,
+                'role': membership.label or user.role,
+                'is_admin': membership.is_admin,
+                'status': membership.status
+            }
+    except Exception as e:
+        logger.warning(f"Error fetching family info for user {user.id}: {e}")
+
+    return {
+        'has_family': False,
+        'family_id': None,
+        'family_name': None,
+        'family_code': None,
+        'role': getattr(user, 'role', 'MEMBER'),
+        'is_admin': False,
+        'status': None
+    }
+
 class GoogleAuthView(APIView):
     permission_classes = (permissions.AllowAny,)
 
     def post(self, request):
-        email = request.data.get('email')
+        email_raw = request.data.get('email')
         username = request.data.get('username') or request.data.get('name')
         
-        if not email:
+        if not email_raw or not str(email_raw).strip():
             return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Get or create CustomUser by email
-        user = CustomUser.objects.filter(email=email).first()
+        clean_email = str(email_raw).strip().lower()
+
+        # Run deduplication on existing duplicate accounts with same email
+        try:
+            from users.utils import deduplicate_users_by_email
+            deduplicate_users_by_email(clean_email)
+        except Exception as e:
+            logger.warning(f"Deduplication warning for {clean_email}: {e}")
+
+        # Get or create CustomUser by case-insensitive email
+        user = CustomUser.objects.filter(email__iexact=clean_email).order_by('id').first()
         if not user:
-            clean_username = (username or email.split('@')[0]).replace(' ', '_')
-            if CustomUser.objects.filter(username=clean_username).exists():
+            clean_username = (username or clean_email.split('@')[0]).replace(' ', '_')
+            if CustomUser.objects.filter(username__iexact=clean_username).exists():
                 clean_username = f"{clean_username}_{uuid.uuid4().hex[:4]}"
             user = CustomUser.objects.create_user(
                 username=clean_username,
-                email=email,
+                email=clean_email,
                 role='MEMBER',
                 is_otp_verified=True,
+                is_active=True,
             )
             user.set_unusable_password()
             user.save()
@@ -87,6 +128,14 @@ class GoogleAuthView(APIView):
                 UserSettings.objects.get_or_create(user=user)
             except Exception:
                 pass
+        else:
+            # Ensure Google user is marked active and verified
+            if not user.is_otp_verified or not user.is_active:
+                user.is_otp_verified = True
+                user.is_active = True
+                user.save(update_fields=['is_otp_verified', 'is_active'])
+
+        family_info = get_family_info_for_user(user)
 
         # Issue Django SimpleJWT tokens
         refresh = RefreshToken.for_user(user)
@@ -97,7 +146,9 @@ class GoogleAuthView(APIView):
             "user_id": user.id,
             "username": user.username,
             "email": user.email,
-            "role": getattr(user, 'role', 'MEMBER')
+            "role": family_info['role'],
+            "has_family": family_info['has_family'],
+            "family_group": family_info if family_info['has_family'] else None
         }, status=status.HTTP_200_OK)
 
 class VerifyOTPView(APIView):
@@ -208,6 +259,16 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        data = serializer.data
+        family_info = get_family_info_for_user(instance)
+        data['role'] = family_info['role']
+        data['has_family'] = family_info['has_family']
+        data['family_group'] = family_info if family_info['has_family'] else None
+        return Response(data)
 
 class UserSettingsViewSet(viewsets.ModelViewSet):
     serializer_class = UserSettingsSerializer
@@ -361,7 +422,8 @@ class AvatarUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
-    ALLOWED_TYPES = {'image/jpeg', 'image/jpg', 'image/png', 'image/webp'}
+    ALLOWED_TYPES = {'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/octet-stream'}
+    ALLOWED_EXTS = {'jpg', 'jpeg', 'png', 'webp'}
     MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
     def _delete_old_avatar(self, user):
@@ -387,82 +449,103 @@ class AvatarUploadView(APIView):
         })
 
     def post(self, request):
-        file = request.FILES.get('avatar')
-        if not file:
-            return Response({"error": "No file uploaded. Use field name 'avatar'."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validate MIME type
-        content_type = file.content_type.lower()
-        if content_type not in self.ALLOWED_TYPES:
-            return Response({
-                "error": f"File type '{content_type}' is not allowed. Accepted: JPG, JPEG, PNG, WEBP."
-            }, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
-
-        # Validate size
-        if file.size > self.MAX_SIZE_BYTES:
-            return Response({
-                "error": f"File too large ({round(file.size / 1024 / 1024, 1)} MB). Maximum allowed: 5 MB."
-            }, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
-
-        # Build unique filename
-        ext = file.name.rsplit('.', 1)[-1].lower() if '.' in file.name else 'jpg'
-        filename = f"{uuid.uuid4()}.{ext}"
-
-        # Ensure directory exists
-        avatar_dir = os.path.join(django_settings.MEDIA_ROOT, 'avatars')
-        os.makedirs(avatar_dir, exist_ok=True)
-
-        # Delete old avatar
-        self._delete_old_avatar(request.user)
-
-        # Save new file
-        file_path = os.path.join(avatar_dir, filename)
-        with open(file_path, 'wb+') as dest:
-            for chunk in file.chunks():
-                dest.write(chunk)
-
-        # Build absolute URL for the saved file
-        relative_url = f"{django_settings.MEDIA_URL}avatars/{filename}"
-        absolute_url = request.build_absolute_uri(relative_url)
-
-        # Persist on CustomUser
-        request.user.profile_picture = absolute_url
-        request.user.save(update_fields=['profile_picture'])
-
-        # Also sync to UserProfileSettings if present
         try:
-            from settings_app.models import UserProfileSettings
-            profile_settings, _ = UserProfileSettings.objects.get_or_create(user=request.user)
-            profile_settings.profile_picture = absolute_url
-            profile_settings.save(update_fields=['profile_picture'])
-        except Exception as e:
-            logger.warning(f"Could not sync avatar to UserProfileSettings: {e}")
+            file = request.FILES.get('avatar')
+            if not file:
+                logger.warning(f"[AvatarUpload] No file provided in request.FILES for user {request.user.username}")
+                return Response({"error": "No file uploaded. Use field name 'avatar'."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Broadcast via WebSocket so all connected clients update instantly
-        try:
-            from asgiref.sync import async_to_sync
-            from channels.layers import get_channel_layer
-            channel_layer = get_channel_layer()
-            if channel_layer:
-                async_to_sync(channel_layer.group_send)(
-                    f'sync_user_{request.user.id}',
-                    {
-                        'type': 'profile_picture_updated',
-                        'section': 'avatar',
-                        'data': {
-                            'profile_picture': absolute_url,
-                            'user_id': request.user.id,
-                            'username': request.user.username,
+            content_type = (file.content_type or '').lower()
+            guessed_type, _ = mimetypes.guess_type(file.name)
+            guessed_type = (guessed_type or '').lower()
+            ext = file.name.rsplit('.', 1)[-1].lower() if '.' in file.name else ''
+
+            logger.info(
+                f"[AvatarUpload] User {request.user.username} ({request.user.id}) uploaded: "
+                f"filename={file.name}, size={file.size} bytes, content_type={content_type}, guessed={guessed_type}, ext={ext}"
+            )
+
+            # Validate type & extension
+            is_valid_type = (content_type in self.ALLOWED_TYPES) or (guessed_type in self.ALLOWED_TYPES)
+            is_valid_ext = ext in self.ALLOWED_EXTS
+
+            if not (is_valid_type or is_valid_ext):
+                logger.error(f"[AvatarUpload] Invalid file type rejected: content_type={content_type}, ext={ext}")
+                return Response({
+                    "error": f"File type '{content_type}' is not allowed. Accepted: JPG, JPEG, PNG, WEBP."
+                }, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+            # Validate size
+            if file.size > self.MAX_SIZE_BYTES:
+                logger.error(f"[AvatarUpload] File size exceeds 5MB limit: {file.size} bytes")
+                return Response({
+                    "error": f"File too large ({round(file.size / 1024 / 1024, 1)} MB). Maximum allowed: 5 MB."
+                }, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+
+            # Build unique filename
+            final_ext = ext if ext in self.ALLOWED_EXTS else 'jpg'
+            filename = f"{uuid.uuid4()}.{final_ext}"
+
+            # Ensure directory exists
+            avatar_dir = os.path.join(django_settings.MEDIA_ROOT, 'avatars')
+            os.makedirs(avatar_dir, exist_ok=True)
+
+            # Delete old avatar
+            self._delete_old_avatar(request.user)
+
+            # Save new file
+            file_path = os.path.join(avatar_dir, filename)
+            with open(file_path, 'wb+') as dest:
+                for chunk in file.chunks():
+                    dest.write(chunk)
+
+            # Build absolute URL for the saved file
+            relative_url = f"{django_settings.MEDIA_URL}avatars/{filename}"
+            absolute_url = request.build_absolute_uri(relative_url)
+
+            logger.info(f"[AvatarUpload] Avatar saved successfully at {file_path} -> {absolute_url}")
+
+            # Persist on CustomUser
+            request.user.profile_picture = absolute_url
+            request.user.save(update_fields=['profile_picture'])
+
+            # Also sync to UserProfileSettings if present
+            try:
+                from settings_app.models import UserProfileSettings
+                profile_settings, _ = UserProfileSettings.objects.get_or_create(user=request.user)
+                profile_settings.profile_picture = absolute_url
+                profile_settings.save(update_fields=['profile_picture'])
+            except Exception as e:
+                logger.warning(f"Could not sync avatar to UserProfileSettings: {e}")
+
+            # Broadcast via WebSocket so all connected clients update instantly
+            try:
+                from asgiref.sync import async_to_sync
+                from channels.layers import get_channel_layer
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(
+                        f'sync_user_{request.user.id}',
+                        {
+                            'type': 'profile_picture_updated',
+                            'section': 'avatar',
+                            'data': {
+                                'profile_picture': absolute_url,
+                                'user_id': request.user.id,
+                                'username': request.user.username,
+                            }
                         }
-                    }
-                )
-        except Exception as e:
-            logger.warning(f"Could not push WS avatar update: {e}")
+                    )
+            except Exception as e:
+                logger.warning(f"Could not push WS avatar update: {e}")
 
-        return Response({
-            "message": "Profile picture updated successfully.",
-            "profile_picture": absolute_url,
-        }, status=status.HTTP_200_OK)
+            return Response({
+                "message": "Profile picture updated successfully.",
+                "profile_picture": absolute_url,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"[AvatarUpload] Exception during avatar upload: {e}\n{traceback.format_exc()}")
+            return Response({"error": f"Failed to save profile picture: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request):
         self._delete_old_avatar(request.user)

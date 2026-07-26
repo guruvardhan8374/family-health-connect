@@ -1,3 +1,20 @@
+import pymysql
+pymysql.install_as_MySQLdb()
+
+# Bypass MariaDB version check for XAMPP MySQL (Django requires 10.6+, XAMPP has 10.4)
+from django.db.backends.base.base import BaseDatabaseWrapper
+BaseDatabaseWrapper.check_database_version_supported = lambda self: None
+
+# Disable RETURNING syntax since MariaDB 10.4 does not support it
+from django.db.backends.mysql.features import DatabaseFeatures
+DatabaseFeatures.can_return_columns_from_insert = False
+DatabaseFeatures.can_return_rows_from_bulk_insert = False
+DatabaseFeatures.supports_returning_fields = False
+
+# Use CHANGE COLUMN instead of RENAME COLUMN for MariaDB 10.4 compatibility
+from django.db.backends.mysql.schema import DatabaseSchemaEditor
+DatabaseSchemaEditor.sql_rename_column = "ALTER TABLE %(table)s CHANGE %(old_column)s %(new_column)s %(type)s"
+
 import os
 from pathlib import Path
 from datetime import timedelta
@@ -107,42 +124,38 @@ if _redis_url:
         },
     }
 
-# Database
-# Use PostgreSQL if DATABASE_URL is set, otherwise SQLite for development
-_database_url = config('DATABASE_URL', default='')
-if _database_url:
-    from urllib.parse import urlparse, parse_qs
-    parsed = urlparse(_database_url)
-    
-    # Extract clean database name (strip query params)
-    db_name = parsed.path.lstrip('/')
-    if '?' in db_name:
-        db_name = db_name.split('?')[0]
-        
-    # Extract query params for options (like sslmode)
-    query_params = parse_qs(parsed.query)
-    ssl_mode = query_params.get('sslmode', ['require'])[0]
-    
+_db_url = config('DATABASE_URL', default='')
+if _db_url:
+    import dj_database_url
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': db_name,
-            'USER': parsed.username,
-            'PASSWORD': parsed.password,
-            'HOST': parsed.hostname,
-            'PORT': parsed.port or 5432,
-            'OPTIONS': {
-                'sslmode': ssl_mode,
-            }
-        }
+        'default': dj_database_url.parse(_db_url, conn_max_age=600)
     }
 else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+    try:
+        import pymysql
+        conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='', connect_timeout=2)
+        conn.close()
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.mysql',
+                'NAME': 'family_health_connect',
+                'USER': 'root',
+                'PASSWORD': '',
+                'HOST': '127.0.0.1',
+                'PORT': '3306',
+                'OPTIONS': {
+                    'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+                }
+            }
         }
-    }
+    except Exception:
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': BASE_DIR / 'db.sqlite3',
+            }
+        }
+
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -251,17 +264,4 @@ TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
 TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
 TWILIO_PHONE_NUMBER = config('TWILIO_PHONE_NUMBER', default='')
 
-# ─── Sentry (optional) ───────────────────────────────────────
-SENTRY_DSN = config('SENTRY_DSN', default='')
-if SENTRY_DSN:
-    try:
-        import sentry_sdk
-        from sentry_sdk.integrations.django import DjangoIntegration
-        sentry_sdk.init(
-            dsn=SENTRY_DSN,
-            integrations=[DjangoIntegration()],
-            traces_sample_rate=1.0,
-            send_default_pii=True
-        )
-    except ImportError:
-        pass
+# ─── Sentry (Removed for local development) ───────────────────

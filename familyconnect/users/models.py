@@ -9,7 +9,7 @@ class CustomUser(AbstractUser):
         ('MEMBER', 'Family Member'),
     )
     phone_number = models.CharField(max_length=20, blank=True, null=True)
-    profile_picture = models.URLField(blank=True, null=True)
+    profile_picture = models.TextField(blank=True, null=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='MEMBER')
     otp_code = models.CharField(max_length=128, blank=True, null=True)
     otp_created_at = models.DateTimeField(blank=True, null=True)
@@ -21,7 +21,14 @@ class CustomUser(AbstractUser):
     gender = models.CharField(max_length=20, blank=True, null=True)
     blood_group = models.CharField(max_length=10, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
+    bio = models.TextField(blank=True, null=True)
+    emergency_contact = models.CharField(max_length=100, blank=True, null=True)
     emergency_phone = models.CharField(max_length=20, blank=True, null=True)
+
+    def save(self, *args, **kwargs):
+        if self.email:
+            self.email = self.email.strip().lower()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"
@@ -30,7 +37,15 @@ class LocationHistory(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='location_history')
     latitude = models.FloatField()
     longitude = models.FloatField()
+    speed = models.FloatField(default=0.0, blank=True, null=True)
+    battery_level = models.IntegerField(default=100, blank=True, null=True)
+    is_moving = models.BooleanField(default=False)
     timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', '-timestamp']),
+        ]
 
     def __str__(self):
         return f"{self.user.username} at {self.latitude}, {self.longitude}"

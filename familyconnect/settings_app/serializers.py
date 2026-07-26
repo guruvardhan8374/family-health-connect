@@ -6,8 +6,17 @@ from .models import (
 
 
 class UserProfileSettingsSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source='user.username', required=False)
+    username = serializers.CharField(source='user.username', required=False, allow_blank=True)
     email = serializers.EmailField(source='user.email', read_only=True)
+    date_of_birth = serializers.DateField(required=False, allow_null=True, input_formats=['%Y-%m-%d', '%Y/%m/%d', '%d-%m-%Y', '%d/%m/%Y', 'iso-8601'])
+    profile_picture = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    phone_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    bio = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    emergency_contact = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    emergency_phone = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    gender = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    blood_group = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    address = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
     class Meta:
         model = UserProfileSettings
@@ -19,9 +28,17 @@ class UserProfileSettingsSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['updated_at']
 
+    def to_internal_value(self, data):
+        mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
+        if 'date_of_birth' in mutable_data:
+            val = mutable_data['date_of_birth']
+            if val == '' or val is None:
+                mutable_data['date_of_birth'] = None
+        return super().to_internal_value(mutable_data)
+
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})
-        username = user_data.get('username')
+        username = user_data.get('username') or validated_data.pop('username', None)
         if username and username != instance.user.username:
             from django.contrib.auth import get_user_model
             User = get_user_model()
@@ -30,10 +47,9 @@ class UserProfileSettingsSerializer(serializers.ModelSerializer):
             instance.user.username = username
             instance.user.save()
 
-        # Update remaining fields on settings instance
+        # Update remaining fields on settings instance and CustomUser
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
-            # Sync to User model if applicable
             if hasattr(instance.user, attr):
                 setattr(instance.user, attr, value)
 
@@ -58,7 +74,9 @@ class PrivacySettingsSerializer(serializers.ModelSerializer):
         model = PrivacySettings
         fields = [
             'profile_visibility', 'health_data_visibility', 'family_visibility',
-            'location_sharing', 'emergency_visibility', 'updated_at'
+            'location_sharing', 'emergency_visibility', 'updated_at',
+            'share_heart_rate', 'share_steps', 'share_calories',
+            'share_sleep', 'share_spo2', 'share_weight', 'share_blood_pressure',
         ]
         read_only_fields = ['updated_at']
 

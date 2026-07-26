@@ -9,6 +9,7 @@ class EmergencyContactSerializer(serializers.ModelSerializer):
 
 class SOSAlertSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
+    triggered_by = serializers.CharField(source='user.username', read_only=True)
     family_name = serializers.SerializerMethodField()
     google_maps_link = serializers.SerializerMethodField()
     emergency_type = serializers.SerializerMethodField()
@@ -16,7 +17,7 @@ class SOSAlertSerializer(serializers.ModelSerializer):
     class Meta:
         model = SOSAlert
         fields = [
-            'id', 'user', 'username', 'family_name', 'emergency_type',
+            'id', 'user', 'username', 'triggered_by', 'family_name', 'emergency_type',
             'location_lat', 'location_lng', 'google_maps_link',
             'message', 'status', 'is_resolved', 'triggered_at',
             'resolved_at', 'vitals_snapshot'

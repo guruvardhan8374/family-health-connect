@@ -20,6 +20,15 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
   String _emergencyVisibility = 'FAMILY';
   bool _locationSharing = true;
 
+  // Granular health sharing values
+  bool _shareHeartRate = true;
+  bool _shareSteps = true;
+  bool _shareCalories = true;
+  bool _shareSleep = true;
+  bool _shareSpo2 = true;
+  bool _shareWeight = true;
+  bool _shareBloodPressure = true;
+
   // Account values
   bool _twoFactorEnabled = false;
 
@@ -51,6 +60,13 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
       _healthVisibility = privacy['health_data_visibility'] ?? 'FAMILY';
       _emergencyVisibility = privacy['emergency_visibility'] ?? 'FAMILY';
       _locationSharing = privacy['location_sharing'] ?? true;
+      _shareHeartRate = privacy['share_heart_rate'] ?? true;
+      _shareSteps = privacy['share_steps'] ?? true;
+      _shareCalories = privacy['share_calories'] ?? true;
+      _shareSleep = privacy['share_sleep'] ?? true;
+      _shareSpo2 = privacy['share_spo2'] ?? true;
+      _shareWeight = privacy['share_weight'] ?? true;
+      _shareBloodPressure = privacy['share_blood_pressure'] ?? true;
     }
 
     if (account != null) {
@@ -69,6 +85,13 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
       'health_data_visibility': _healthVisibility,
       'emergency_visibility': _emergencyVisibility,
       'location_sharing': _locationSharing,
+      'share_heart_rate': _shareHeartRate,
+      'share_steps': _shareSteps,
+      'share_calories': _shareCalories,
+      'share_sleep': _shareSleep,
+      'share_spo2': _shareSpo2,
+      'share_weight': _shareWeight,
+      'share_blood_pressure': _shareBloodPressure,
     });
     
     if (mounted) {
@@ -251,6 +274,52 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                   activeThumbColor: const Color(0xFF14B8A6),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 ),
+                if (_healthVisibility != 'PRIVATE') ...[
+                  const Divider(height: 32),
+                  _buildSectionHeader('Granular Family Health Sharing'),
+                  _buildSwitchTile(
+                    title: 'Share Heart Rate',
+                    subtitle: 'Allow family circle to view your heart rate updates',
+                    value: _shareHeartRate,
+                    onChanged: (val) => setState(() => _shareHeartRate = val),
+                  ),
+                  _buildSwitchTile(
+                    title: 'Share Steps',
+                    subtitle: 'Allow family circle to view your today\'s steps count',
+                    value: _shareSteps,
+                    onChanged: (val) => setState(() => _shareSteps = val),
+                  ),
+                  _buildSwitchTile(
+                    title: 'Share Calories',
+                    subtitle: 'Allow family circle to view calories burned today',
+                    value: _shareCalories,
+                    onChanged: (val) => setState(() => _shareCalories = val),
+                  ),
+                  _buildSwitchTile(
+                    title: 'Share Sleep',
+                    subtitle: 'Allow family circle to view sleep hours & stages',
+                    value: _shareSleep,
+                    onChanged: (val) => setState(() => _shareSleep = val),
+                  ),
+                  _buildSwitchTile(
+                    title: 'Share SpO₂',
+                    subtitle: 'Allow family circle to view blood oxygen levels',
+                    value: _shareSpo2,
+                    onChanged: (val) => setState(() => _shareSpo2 = val),
+                  ),
+                  _buildSwitchTile(
+                    title: 'Share Weight',
+                    subtitle: 'Allow family circle to view weight logs & BMI',
+                    value: _shareWeight,
+                    onChanged: (val) => setState(() => _shareWeight = val),
+                  ),
+                  _buildSwitchTile(
+                    title: 'Share Blood Pressure',
+                    subtitle: 'Allow family circle to view blood pressure readings',
+                    value: _shareBloodPressure,
+                    onChanged: (val) => setState(() => _shareBloodPressure = val),
+                  ),
+                ],
                 const SizedBox(height: 16),
 
                 _buildSectionHeader('Authentication Settings'),
@@ -377,6 +446,29 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSwitchTile({
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      color: isDark ? const Color(0xFF1E293B) : Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: SwitchListTile(
+        value: value,
+        onChanged: onChanged,
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        activeThumbColor: const Color(0xFF14B8A6),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),
     );
   }

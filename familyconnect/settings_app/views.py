@@ -23,9 +23,30 @@ class BaseSettingsView(generics.RetrieveUpdateAPIView):
         obj, created = model.objects.get_or_create(user=self.request.user)
         return obj
 
+    def put(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
+
+
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
+
 
 class UserProfileSettingsView(BaseSettingsView):
     serializer_class = UserProfileSettingsSerializer
+
+    def put(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        logger.info(f"[ProfileUpdate] PUT /api/v1/settings/profile/ by user {request.user.username} ({request.user.id}): data={request.data}")
+        try:
+            response = super().put(request, *args, **kwargs)
+            logger.info(f"[ProfileUpdate] Profile updated successfully for user {request.user.username}")
+            return response
+        except Exception as e:
+            logger.error(f"[ProfileUpdate EXCEPTION] {e}\n{traceback.format_exc()}")
+            raise e
 
 
 class NotificationSettingsView(BaseSettingsView):

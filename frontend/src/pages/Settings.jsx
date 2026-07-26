@@ -8,7 +8,7 @@ import UserAvatar from '../components/UserAvatar';
 import {
   User, Bell, Shield, Eye, Moon, Sun,
   Camera, Lock, Key, Trash2, LogOut,
-  CheckCircle, AlertCircle, Loader2, Globe, ShieldAlert
+  CheckCircle, AlertCircle, Loader2, Globe, ShieldAlert, Heart
 } from 'lucide-react';
 
 export default function Settings() {
@@ -299,7 +299,7 @@ export default function Settings() {
 
   const tabs = [
     { id: 'profile', name: 'Profile Settings', icon: User },
-    { id: 'notifications', name: 'Notifications', icon: Bell },
+    { id: 'health_data', name: 'Health Data Source', icon: Heart },
     { id: 'privacy', name: 'Privacy Settings', icon: Eye },
     { id: 'theme', name: 'Theme Settings', icon: Moon },
     { id: 'account', name: 'Account Settings', icon: Shield },
@@ -501,49 +501,64 @@ export default function Settings() {
             </section>
           )}
 
-          {/* NOTIFICATION SETTINGS TAB */}
-          {activeTab === 'notifications' && (
+          {/* HEALTH DATA SOURCE TAB */}
+          {activeTab === 'health_data' && (
             <section className="bg-white dark:bg-navy-900/40 backdrop-blur-md p-6 md:p-8 rounded-[2rem] border border-navy-100 dark:border-navy-800 shadow-xl shadow-navy-100/10 space-y-6">
               <div>
-                <h3 className="text-2xl font-bold text-navy-900 dark:text-white">Notification Settings</h3>
-                <p className="text-navy-400 text-sm mt-1">Configure when and where you want to be notified. Changes save instantly.</p>
+                <h3 className="text-2xl font-bold text-navy-900 dark:text-white">Health Data Source</h3>
+                <p className="text-navy-400 text-sm mt-1">Official health data providers synchronized from your connected mobile app.</p>
               </div>
 
-              <div className="divide-y divide-navy-50 dark:divide-navy-800">
-                {[
-                  { key: 'push_notifications', name: 'Push Notifications', desc: 'Enable native device push alerts' },
-                  { key: 'medicine_reminders', name: 'Medicine Reminders', desc: 'Alerts when it is time to take pills or doses' },
-                  { key: 'health_reminders', name: 'Health Checkup Reminders', desc: 'Alerts for annual and weekly general checkups' },
-                  { key: 'emergency_alerts', name: 'SOS & Emergency Alerts', desc: 'Instant notifications when a family member triggers SOS' },
-                  { key: 'family_notifications', name: 'Family Network Alerts', desc: 'Updates on family member activities' },
-                  { key: 'chat_notifications', name: 'Chat Messages', desc: 'Alerts for new incoming messaging threads' },
-                  { key: 'email_notifications', name: 'Email Updates', desc: 'Receive summaries and digests via email' },
-                ].map((item) => {
-                  const isChecked = notifications[item.key];
-                  return (
-                    <div key={item.key} className="flex items-center justify-between py-4 first:pt-0 last:pb-0">
-                      <div>
-                        <p className="font-bold text-navy-900 dark:text-white text-sm">{item.name}</p>
-                        <p className="text-xs text-navy-400 mt-0.5">{item.desc}</p>
-                      </div>
-                      <button
-                        onClick={() => handleNotificationToggle(item.key)}
-                        className={`w-12 h-6 rounded-full transition-all relative outline-none shrink-0 ${
-                          isChecked ? 'bg-brand-500' : 'bg-navy-200 dark:bg-navy-800'
-                        }`}
-                      >
-                        <div
-                          className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${
-                            isChecked ? 'right-1' : 'left-1'
-                          }`}
-                        />
-                      </button>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="p-5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl">
+                  <div className="flex items-center space-x-3">
+                    <Heart className="w-8 h-8 text-emerald-600" />
+                    <div>
+                      <h4 className="font-bold text-navy-900 dark:text-white">Android Health Connect</h4>
+                      <p className="text-xs text-navy-500 dark:text-navy-400">Google Fit, Samsung Health & Fitbit Sync</p>
                     </div>
-                  );
-                })}
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-emerald-200/50 dark:border-emerald-800/40 flex items-center justify-between text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                    <span>Permission Status</span>
+                    <span className="bg-emerald-100 dark:bg-emerald-900/60 px-2.5 py-1 rounded-full text-emerald-700 dark:text-emerald-300">Active</span>
+                  </div>
+                </div>
+
+                <div className="p-5 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800/40 rounded-2xl">
+                  <div className="flex items-center space-x-3">
+                    <Heart className="w-8 h-8 text-rose-600" />
+                    <div>
+                      <h4 className="font-bold text-navy-900 dark:text-white">Apple HealthKit</h4>
+                      <p className="text-xs text-navy-500 dark:text-navy-400">iPhone & Apple Watch Health Data</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-rose-200/50 dark:border-rose-800/40 flex items-center justify-between text-xs font-semibold text-rose-800 dark:text-rose-300">
+                    <span>Permission Status</span>
+                    <span className="bg-rose-100 dark:bg-rose-900/60 px-2.5 py-1 rounded-full text-rose-700 dark:text-rose-300">Active</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 bg-navy-50 dark:bg-navy-900/50 rounded-2xl border border-navy-100/50 dark:border-navy-800/40 space-y-3">
+                <h4 className="font-bold text-navy-900 dark:text-white text-sm">Connected Fitness Apps</h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-bold text-navy-700 dark:text-navy-300">
+                  <div className="bg-white dark:bg-navy-850 p-3 rounded-xl border border-navy-200 dark:border-navy-800 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-500" /> Google Fit
+                  </div>
+                  <div className="bg-white dark:bg-navy-850 p-3 rounded-xl border border-navy-200 dark:border-navy-800 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-500" /> Samsung Health
+                  </div>
+                  <div className="bg-white dark:bg-navy-850 p-3 rounded-xl border border-navy-200 dark:border-navy-800 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-500" /> Fitbit
+                  </div>
+                  <div className="bg-white dark:bg-navy-850 p-3 rounded-xl border border-navy-200 dark:border-navy-800 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-500" /> Apple Health
+                  </div>
+                </div>
               </div>
             </section>
           )}
+
 
           {/* PRIVACY SETTINGS TAB */}
           {activeTab === 'privacy' && (

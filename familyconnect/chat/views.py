@@ -64,6 +64,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         if not is_member:
             return Response({"error": "You must be an approved family member to create this chat"}, status=status.HTTP_403_FORBIDDEN)
             
+        was_existing = Conversation.objects.filter(is_group=True, family_group=family_group).exists()
         conversation = create_family_group_chat(family_group)
         if serializer.validated_data.get('name'):
             conversation.name = serializer.validated_data['name']
@@ -71,7 +72,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
             conversation.description = serializer.validated_data['description']
         conversation.save()
         
-        return Response(ConversationSerializer(conversation, context={'request': request}).data, status=status.HTTP_201_CREATED)
+        return Response(
+            ConversationSerializer(conversation, context={'request': request}).data,
+            status=status.HTTP_200_OK if was_existing else status.HTTP_201_CREATED
+        )
 
     @action(detail=True, methods=['post'])
     def pin(self, request, pk=None):

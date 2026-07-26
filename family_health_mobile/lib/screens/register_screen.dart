@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
-import 'otp_verification_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -80,26 +79,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = false);
 
     if (res != null) {
-      if (res.containsKey('user')) {
-        // Success
+      // Check for network error returned from API service
+      if (res.containsKey('network_error')) {
+        setState(() {
+          _error = 'Cannot reach server. Make sure the app is up to date and USB is connected.\nError: ${res['detail']}';
+        });
+        return;
+      }
+      // Check for success: registration returns 'user' or 'id' key, or status_code 201
+      if (res.containsKey('id') || res.containsKey('user') ||
+          (res.containsKey('status_code') && res['status_code'] == 201)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(res['message'] ?? 'Registration successful! Verification code sent.'),
-              backgroundColor: const Color(0xFF10B981),
+            const SnackBar(
+              content: Text('Registration successful! You can now log in.'),
+              backgroundColor: Color(0xFF10B981),
             ),
           );
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => OtpVerificationScreen(email: email),
-            ),
-          );
+          Navigator.pop(context);
         }
       } else {
-        // Validation errors returned
+        // Validation errors returned from server
         setState(() {
-          _fieldErrors = res;
+          _fieldErrors = Map<String, dynamic>.from(res);
           if (res.containsKey('non_field_errors')) {
             _error = (res['non_field_errors'] as List).join('\n');
           } else if (res.containsKey('detail')) {
@@ -111,7 +113,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     } else {
       setState(() {
-        _error = 'Network error or server unavailable. Please try again later.';
+        _error = 'Network error: Could not reach server. Make sure USB is still connected.';
       });
     }
   }

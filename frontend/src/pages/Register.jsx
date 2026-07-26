@@ -70,8 +70,8 @@ export default function Register() {
         password_confirm: formData.password,
         role:             formData.role,
       });
-      // Always redirect to OTP verification so email is verified before login
-      navigate('/verify-otp', { state: { email: formData.email.trim() } });
+      // Redirect to login page instead of OTP verification since OTP is removed
+      navigate('/login', { state: { email: formData.email.trim(), successMsg: 'Registration successful! You can now log in.' } });
     } catch (err) {
       if (!err.response) {
         setError('Server is unreachable. It may be waking up — please wait 30 seconds and try again.');

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../services/sync_service.dart';
+import '../services/location_service.dart';
 import 'chat_screen.dart';
 
 class FamilyScreen extends StatefulWidget {
@@ -22,7 +23,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchMembers();
+    _fetchMembers(forceRefresh: true);
     _syncSubscription = SyncService.instance.stream.listen((event) {
       if (event['type'] == 'family.update') {
         _fetchMembers();
@@ -275,7 +276,16 @@ class _FamilyScreenState extends State<FamilyScreen> {
                             }
                             return;
                           }
-                          msg = res['error']?.toString() ?? 'Failed to create Family Circle.';
+                          msg = res['error'] ?? 'Failed to create group.';
+                        }
+
+                        if (success) {
+                          LocationService.startPeriodicTracking();
+                          LocationService.getCurrentPosition().then((pos) {
+                            if (pos != null) {
+                              ApiService.updateLocation(lat: pos.latitude, lng: pos.longitude);
+                            }
+                          });
                         }
 
                         if (ctx.mounted) {
@@ -484,7 +494,6 @@ class _FamilyScreenState extends State<FamilyScreen> {
                   ..._members.map((member) {
                     final userDetails = member['user_details'] as Map<String, dynamic>?;
                     final username = userDetails != null ? (userDetails['username'] ?? '') : (member['name'] ?? 'Unknown');
-                    final email = userDetails != null ? (userDetails['email'] ?? '') : '';
                     final phone = userDetails != null ? (userDetails['phone_number'] ?? '') : '';
                     final labelStr = _getRoleDisplay((member['label'] ?? 'Member').toString());
                     final statusStr = (member['is_approved'] == true ? 'Active' : 'Pending').toString();

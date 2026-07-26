@@ -7,7 +7,7 @@ export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // ── Load / refresh the user profile from backend ────────────────────────
+  // ── Load / refresh the user profile & family state from backend ───────────
   const loadUser = useCallback(async () => {
     const token = localStorage.getItem('access_token');
     if (!token) {
@@ -16,45 +16,28 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // Google/Firebase — reconstruct user from localStorage (no backend call needed)
-    if (localStorage.getItem('auth_provider') === 'google') {
-      setUser({
-        id:            localStorage.getItem('user_id'),
-        username:      localStorage.getItem('username') || 'User',
-        email:         localStorage.getItem('email')    || '',
-        role:          localStorage.getItem('role')     || 'MEMBER',
-        auth_provider: 'google',
-      });
-      setLoading(false);
-      return;
-    }
-
-    // Django JWT — fetch full profile
     try {
       const res     = await api.get('/users/profile/');
       const profile = res.data;
       // Keep localStorage in sync
-      if (profile.id)       localStorage.setItem('user_id',  profile.id.toString());
-      if (profile.username) localStorage.setItem('username', profile.username);
-      if (profile.email)    localStorage.setItem('email',    profile.email);
-      if (profile.role)     localStorage.setItem('role',     profile.role);
+      if (profile.id)           localStorage.setItem('user_id',  profile.id.toString());
+      if (profile.username)     localStorage.setItem('username', profile.username);
+      if (profile.email)        localStorage.setItem('email',    profile.email);
+      if (profile.role)         localStorage.setItem('role',     profile.role);
+      if (profile.has_family)   localStorage.setItem('has_family', 'true');
+      else                      localStorage.removeItem('has_family');
+
       setUser(profile);
     } catch (err) {
       if (err.response?.status === 401) {
-        // Token invalid — the api.js interceptor will already have:
-        // 1. Tried to refresh the token (if refresh token exists)
-        // 2. Either retried and succeeded (in which case this catch won't run)
-        //    OR called clearAuthAndRedirect (which navigates away)
-        // We only land here if the interceptor re-threw the error after redirect.
-        // Safely set user to null without double-redirecting.
         setUser(null);
       } else {
-        // Network error (Render cold start) — serve cached user so UI doesn't flash logout
         const cached = {
-          id:       localStorage.getItem('user_id'),
-          username: localStorage.getItem('username') || 'User',
-          email:    localStorage.getItem('email')    || '',
-          role:     localStorage.getItem('role')     || 'MEMBER',
+          id:          localStorage.getItem('user_id'),
+          username:    localStorage.getItem('username') || 'User',
+          email:       localStorage.getItem('email')    || '',
+          role:        localStorage.getItem('role')     || 'MEMBER',
+          has_family:  localStorage.getItem('has_family') === 'true',
         };
         setUser(cached.id ? cached : null);
       }

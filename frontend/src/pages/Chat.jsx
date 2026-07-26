@@ -365,26 +365,22 @@ export default function Chat() {
     const textContent = input.trim();
     setInput('');
 
-    // Always use HTTP POST as primary to guarantee storage and compatibility
+    // Use HTTP POST — the Django backend broadcasts via WebSocket channel layer automatically.
+    // Do NOT also send via WebSocket here to avoid the sender seeing the message twice.
     const payload = { conversation: activeConv.id, content: textContent, message_type: 'TEXT' };
     try {
       const res = await api.post('/chat/messages/', payload);
       const formattedMsg = res.data.results || res.data;
+      // Optimistically add own message immediately from REST response
       setMessages(prev => {
         if (prev.some(m => m.id === formattedMsg.id)) return prev;
         return [...prev, formattedMsg];
       });
       updateConvList(formattedMsg);
-      
-      // Also send via WebSocket if open so other connected clients receive it instantly (in addition to HTTP broadcast)
-      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({
-          content: textContent,
-          message_type: 'TEXT'
-        }));
-      }
     } catch (err) {
       console.error("HTTP message send failed:", err);
+      // Restore message to input if failed
+      setInput(textContent);
       alert("Failed to send message. Please try again.");
     }
   };

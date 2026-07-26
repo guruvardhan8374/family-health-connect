@@ -26,11 +26,23 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
         return FamilyGroupSerializer
 
     def get_queryset(self):
-        # Users can only see family groups they are a member of
-        return FamilyGroup.objects.filter(
+        # Return ONLY families where the logged-in user has an ACTIVE, approved membership.
+        # This ensures:
+        #   - Members only see families they belong to (not all families)
+        #   - Joining by invitation code shows only that joined family
+        #   - Inactive/pending memberships are excluded
+        qs = FamilyGroup.objects.filter(
             memberships__user=self.request.user,
-            memberships__is_approved=True
-        ).annotate(member_count=Count('memberships')).distinct().order_by('-created_at')
+            memberships__is_approved=True,
+            memberships__status='ACTIVE',
+        ).select_related('created_by').annotate(member_count=Count('memberships')).distinct().order_by('-created_at')
+
+        if self.action in ['retrieve', 'update', 'partial_update']:
+            from django.db.models import Prefetch
+            qs = qs.prefetch_related(
+                Prefetch('memberships', queryset=FamilyMembership.objects.select_related('user'))
+            )
+        return qs
 
     def perform_create(self, serializer):
         import logging
@@ -201,7 +213,14 @@ class FamilyMembershipViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
-        groups = FamilyGroup.objects.filter(memberships__user=self.request.user, memberships__is_approved=True)
+        groups = FamilyGroup.objects.filter(
+            memberships__user=self.request.user,
+            memberships__is_approved=True,
+            memberships__status='ACTIVE',
+        )
+        group_id = self.request.query_params.get('group_id')
+        if group_id:
+            groups = groups.filter(id=group_id)
         return FamilyMembership.objects.filter(family_group__in=groups).select_related('user', 'family_group').order_by('-joined_at')
 
     @action(detail=True, methods=['post'])
@@ -285,7 +304,7 @@ class FamilyInvitationViewSet(viewsets.ModelViewSet):
         return FamilyInvitation.objects.filter(
             family_group__memberships__user=self.request.user,
             family_group__memberships__is_admin=True
-        ).distinct().order_by('-created_at')
+        ).select_related('invited_by', 'family_group').distinct().order_by('-created_at')
 
     def perform_create(self, serializer):
         # ViewSet creates custom invites inside the `invite_member` action of FamilyGroupViewSet

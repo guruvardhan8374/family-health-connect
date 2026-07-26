@@ -8,7 +8,7 @@ import 'appearance_settings_screen.dart';
 import 'language_settings_screen.dart';
 import 'help_center_screen.dart';
 import 'about_screen.dart';
-import 'wireless_vitals_screen.dart';
+import 'health_data_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -45,18 +45,12 @@ class SettingsScreen extends StatelessWidget {
           _buildSettingsSection('Preferences'),
           _buildSettingsTile(
             context,
-            Icons.sensors_rounded,
-            'Wireless Vitals & IoT',
-            'Connect Google Fit, Garmin, and Fitbit',
-            const WirelessVitalsScreen(),
+            Icons.health_and_safety_rounded,
+            'Health Data',
+            'Health Connect & Apple HealthKit sync status',
+            const HealthDataSettingsScreen(),
           ),
-          _buildSettingsTile(
-            context,
-            Icons.notifications_none,
-            'Notifications',
-            'Customize alerts and reminders',
-            const NotificationsSettingsScreen(),
-          ),
+
           _buildSettingsTile(
             context,
             Icons.dark_mode_outlined,

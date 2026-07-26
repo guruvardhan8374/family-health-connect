@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
-from users.views import SecureTokenObtainPairView
+from users.views import SecureTokenObtainPairView, LocationHistoryViewSet
 from rest_framework_simplejwt.views import TokenRefreshView
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -46,6 +46,7 @@ urlpatterns = [
     path('api/v1/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 
     # App URLs
+    path('api/v1/locations/', LocationHistoryViewSet.as_view({'get': 'list', 'post': 'create'}), name='locations-direct'),
     path('api/v1/users/', include('users.urls')),
     path('api/v1/family/', include('family.urls')),
     path('api/v1/health/', include('health.urls')),

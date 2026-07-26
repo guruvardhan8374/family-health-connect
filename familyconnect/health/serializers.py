@@ -13,6 +13,8 @@ class HealthSnapshotSerializer(serializers.ModelSerializer):
             'heart_rate', 'steps', 'calories', 'distance',
             'sleep_hours', 'spo2', 'hydration', 'weight', 'height',
             'blood_pressure', 'notes', 'bmi',
+            'sleep_light', 'sleep_deep', 'sleep_rem', 'sleep_awake',
+            'body_fat', 'exercise_count', 'device_name',
         ]
         read_only_fields = ['id', 'bmi']
 

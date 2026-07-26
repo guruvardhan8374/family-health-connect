@@ -93,6 +93,37 @@ def on_privacy_saved(sender, instance, **kwargs):
         'emergency_visibility': instance.emergency_visibility,
     })
 
+    # Broadcast location update to family members so their maps reflect privacy changes immediately
+    try:
+        from django.utils import timezone
+        latest = instance.user.location_history.order_by('-timestamp').first()
+        is_sharing = instance.location_sharing
+        full_name = instance.user.get_full_name() or instance.user.username
+        loc_payload = {
+            'user_id': instance.user_id,
+            'username': instance.user.username,
+            'full_name': full_name,
+            'profile_picture': instance.user.profile_picture,
+            'latitude': latest.latitude if latest else 0.0,
+            'longitude': latest.longitude if latest else 0.0,
+            'speed': getattr(latest, 'speed', 0.0) if latest else 0.0,
+            'battery_level': getattr(latest, 'battery_level', 100) if latest else 100,
+            'is_moving': getattr(latest, 'is_moving', False) if latest else False,
+            'timestamp': latest.timestamp.isoformat() if latest else timezone.now().isoformat(),
+            'is_online': is_sharing and (latest is not None),
+            'is_sharing_enabled': is_sharing,
+            'last_seen_formatted': 'Just now' if (is_sharing and latest) else 'Sharing disabled',
+        }
+        from family.models import FamilyMembership
+        family_ids = FamilyMembership.objects.filter(
+            user_id=instance.user_id, is_approved=True
+        ).values_list('family_group_id', flat=True)
+        for fid in family_ids:
+            _push_to_family_group_id(fid, 'location.update', 'gps', loc_payload, exclude_user=instance.user_id)
+    except Exception as e:
+        logger.warning(f'[sync] privacy location push failed: {e}')
+
+
 
 @receiver(post_save, sender='settings_app.UserProfileSettings')
 def on_profile_saved(sender, instance, **kwargs):
@@ -264,8 +295,14 @@ def on_notification_saved(sender, instance, created, **kwargs):
             'message': instance.message,
             'priority': instance.priority,
             'data': instance.data,
+            'is_read': instance.is_read,
             'created_at': instance.created_at.isoformat(),
         })
+        try:
+            from notifications.services import send_fcm_notification
+            send_fcm_notification(instance.user, instance.title, instance.message, instance.data)
+        except Exception:
+            pass
 
 
 @receiver(post_save, sender='notifications.Reminder')
@@ -289,15 +326,36 @@ def on_reminder_saved(sender, instance, created, **kwargs):
 def on_location_saved(sender, instance, created, **kwargs):
     if not created:
         return
+
+    is_sharing = True
+    try:
+        if hasattr(instance.user, 'privacy_settings'):
+            is_sharing = instance.user.privacy_settings.location_sharing
+    except Exception:
+        pass
+
+    full_name = ''
+    if instance.user:
+        full_name = instance.user.get_full_name() or instance.user.username
+
     payload = {
         'user_id': instance.user_id,
         'username': instance.user.username if instance.user else None,
+        'full_name': full_name,
+        'profile_picture': instance.user.profile_picture if instance.user else None,
         'latitude': instance.latitude,
         'longitude': instance.longitude,
+        'speed': getattr(instance, 'speed', 0.0) or 0.0,
+        'battery_level': getattr(instance, 'battery_level', 100) or 100,
+        'is_moving': getattr(instance, 'is_moving', False),
         'timestamp': instance.timestamp.isoformat(),
+        'is_online': True,
+        'is_sharing_enabled': is_sharing,
+        'last_seen_formatted': 'Just now',
     }
     # Push to self
     _push(instance.user_id, 'location.update', 'gps', payload)
+
     # Push to all family members in same groups
     try:
         from family.models import FamilyMembership

@@ -64,27 +64,28 @@ class HealthConsumer(AsyncJsonWebsocketConsumer):
             data = content.get('data', {})
             snapshot = await self._save_snapshot(data)
             if snapshot:
-                await self.channel_layer.group_send(
-                    self.personal_group,
-                    {
-                        'type': 'health.update',
-                        'snapshot': {
-                            'id': snapshot.id,
-                            'recorded_at': snapshot.recorded_at.isoformat(),
-                            'heart_rate': snapshot.heart_rate,
-                            'steps': snapshot.steps,
-                            'calories': snapshot.calories,
-                            'distance': snapshot.distance,
-                            'sleep_hours': snapshot.sleep_hours,
-                            'spo2': snapshot.spo2,
-                            'hydration': snapshot.hydration,
-                            'weight': snapshot.weight,
-                            'height': snapshot.height,
-                            'bmi': snapshot.bmi,
-                            'blood_pressure': snapshot.blood_pressure,
-                        },
+                payload = {
+                    'type': 'health.update',
+                    'snapshot': {
+                        'id': snapshot.id,
+                        'user_id': snapshot.user.id,
+                        'recorded_at': snapshot.recorded_at.isoformat(),
+                        'heart_rate': snapshot.heart_rate,
+                        'steps': snapshot.steps,
+                        'calories': snapshot.calories,
+                        'distance': snapshot.distance,
+                        'sleep_hours': snapshot.sleep_hours,
+                        'spo2': snapshot.spo2,
+                        'hydration': snapshot.hydration,
+                        'weight': snapshot.weight,
+                        'height': snapshot.height,
+                        'bmi': snapshot.bmi,
+                        'blood_pressure': snapshot.blood_pressure,
                     },
-                )
+                }
+                await self.channel_layer.group_send(self.personal_group, payload)
+                for fg in self.family_groups:
+                    await self.channel_layer.group_send(fg, payload)
 
     # ── Group event handlers (called by channel layer) ─────────────────────
 
@@ -151,6 +152,13 @@ class HealthConsumer(AsyncJsonWebsocketConsumer):
                 height=data.get('height'),
                 blood_pressure=data.get('blood_pressure'),
                 notes=data.get('notes', ''),
+                sleep_light=data.get('sleep_light'),
+                sleep_deep=data.get('sleep_deep'),
+                sleep_rem=data.get('sleep_rem'),
+                sleep_awake=data.get('sleep_awake'),
+                body_fat=data.get('body_fat'),
+                exercise_count=data.get('exercise_count', 0),
+                device_name=data.get('device_name', ''),
             )
             _check_and_create_alerts(snapshot)
             return snapshot

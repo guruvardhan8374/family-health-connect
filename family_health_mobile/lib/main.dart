@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/health_screen.dart';
@@ -15,6 +16,10 @@ import 'services/api_service.dart';
 import 'services/sync_service.dart';
 import 'services/offline_queue_service.dart';
 import 'services/pedometer_service.dart';
+import 'services/health_service.dart';
+import 'services/app_config.dart';
+import 'services/translation_service.dart';
+import 'services/firebase_options.dart';
 
 class ThemeController {
   static final ThemeController instance = ThemeController._internal();
@@ -129,7 +134,12 @@ void main() async {
       statusBarIconBrightness: Brightness.light,
     ),
   );
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  await AppConfig.initialize();
   await Hive.initFlutter();
+  await TranslationService.instance.init();
   await OfflineQueueService.instance.init();
   await ThemeController.instance.loadTheme();
   runApp(const FamilyHealthApp());
@@ -140,8 +150,11 @@ class FamilyHealthApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: ThemeController.instance.themeMode,
+    return ListenableBuilder(
+      listenable: TranslationService.instance,
+      builder: (context, _) {
+        return ValueListenableBuilder<ThemeMode>(
+          valueListenable: ThemeController.instance.themeMode,
       builder: (context, mode, child) {
         return ValueListenableBuilder<Color>(
           valueListenable: ThemeController.instance.themeColor,
@@ -186,6 +199,8 @@ class FamilyHealthApp extends StatelessWidget {
             );
           },
         );
+      },
+    );
       },
     );
   }
@@ -244,15 +259,41 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
   StreamSubscription? _sosSub;
 
   @override
   void initState() {
     super.initState();
-    PedometerService.instance.init();
+    WidgetsBinding.instance.addObserver(this);
     _listenForSOS();
+    _triggerAutoHealthSync();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _sosSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('[Lifecycle] App resumed — triggering automatic Health Connect sync...');
+      _triggerAutoHealthSync();
+    }
+  }
+
+  Future<void> _triggerAutoHealthSync() async {
+    try {
+      final snapshot = await HealthService.instance.fetchTodaySnapshot();
+      await ApiService.syncHealthSnapshot(snapshot);
+      debugPrint('[AutoSync] Background/Resume sync completed successfully');
+    } catch (e) {
+      debugPrint('[AutoSync] Sync error: $e');
+    }
   }
 
   void _listenForSOS() {
@@ -401,12 +442,6 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  @override
-  void dispose() {
-    _sosSub?.cancel();
-    super.dispose();
-  }
-
   final List<Widget> _screens = const [
     DashboardScreen(),
     HealthScreen(),
@@ -417,6 +452,82 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
+    final isDesktop = MediaQuery.of(context).size.width >= 900;
+
+    if (isDesktop) {
+      return Scaffold(
+        body: Row(
+          children: [
+            // Left Sidebar for Web / Desktop
+            Container(
+              width: 250,
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(2, 0),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 24),
+                  // App Brand Logo & Name
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF14B8A6).withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.favorite_rounded, color: Color(0xFF14B8A6), size: 28),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text(
+                        'Family Health',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+                  const Divider(height: 1, indent: 16, endIndent: 16),
+                  const SizedBox(height: 16),
+                  // Navigation Items
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      children: [
+                        _sidebarNavItem(0, Icons.dashboard_rounded, TranslationService.translate('home')),
+                        _sidebarNavItem(1, Icons.favorite_rounded, TranslationService.translate('health')),
+                        _sidebarNavItem(2, Icons.people_rounded, TranslationService.translate('family')),
+                        _sidebarNavItem(3, Icons.chat_bubble_rounded, TranslationService.translate('chat')),
+                        _sidebarNavItem(4, Icons.shield_rounded, TranslationService.translate('sos')),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Right Main Content Viewport
+            Expanded(
+              child: IndexedStack(
+                index: _currentIndex,
+                children: _screens,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       body: IndexedStack(
@@ -440,15 +551,38 @@ class _MainShellState extends State<MainShell> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _navItem(0, Icons.dashboard_rounded, 'Home'),
-                _navItem(1, Icons.favorite_rounded, 'Health'),
-                _navItem(2, Icons.people_rounded, 'Family'),
-                _navItem(3, Icons.chat_bubble_rounded, 'Chat'),
-                _navItem(4, Icons.shield_rounded, 'SOS'),
+                _navItem(0, Icons.dashboard_rounded, TranslationService.translate('home')),
+                _navItem(1, Icons.favorite_rounded, TranslationService.translate('health')),
+                _navItem(2, Icons.people_rounded, TranslationService.translate('family')),
+                _navItem(3, Icons.chat_bubble_rounded, TranslationService.translate('chat')),
+                _navItem(4, Icons.shield_rounded, TranslationService.translate('sos')),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _sidebarNavItem(int index, IconData icon, String label) {
+    final isSelected = _currentIndex == index;
+    final color = index == 4 ? const Color(0xFFEF4444) : const Color(0xFF14B8A6);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        tileColor: isSelected ? color.withValues(alpha: 0.12) : Colors.transparent,
+        leading: Icon(icon, color: isSelected ? color : const Color(0xFF64748B)),
+        title: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? color : const Color(0xFF64748B),
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+            fontSize: 14,
+          ),
+        ),
+        onTap: () => setState(() => _currentIndex = index),
       ),
     );
   }
@@ -487,3 +621,4 @@ class _MainShellState extends State<MainShell> {
     );
   }
 }
+

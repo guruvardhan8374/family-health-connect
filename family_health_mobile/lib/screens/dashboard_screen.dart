@@ -1,9 +1,16 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
+import '../services/sync_service.dart';
+import '../services/health_service.dart';
+import '../services/translation_service.dart';
 import 'settings_screen.dart';
 import 'live_location_screen.dart';
+import 'notifications_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -16,6 +23,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _username = 'User';
   List<dynamic> _members = [];
   bool _isLoading = true;
+  int _unreadNotifCount = 0;
+  StreamSubscription? _syncSub;
+  Map<String, dynamic>? _activeSOS; // active SOS from a family member
 
   double _avgSleep = 0.0;
   double _avgSteps = 0.0;
@@ -24,10 +34,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    // ── Show cached username instantly (from in-memory cache, zero I/O) ───────
     _loadCachedUsername();
-    // ── Fetch remote data in background — UI shows immediately with skeleton ──
     _fetchDashboardData();
+    _listenToRealtimeEvents();
+    _checkActiveSOS();
+    LocationService.startPeriodicTracking();
+  }
+
+  void _listenToRealtimeEvents() {
+    _syncSub = SyncService.instance.stream.listen((event) {
+      if (!mounted) return;
+      if (event['type'] == 'notification.new') {
+        setState(() => _unreadNotifCount++);
+      }
+      if (event['type'] == 'health.update') {
+        _fetchDashboardData();
+      }
+      // Real-time SOS from a family member
+      if (event['type'] == 'emergency.alert') {
+        final data = event['data'] as Map<String, dynamic>? ?? {};
+        final isResolved = data['is_resolved'] == true ||
+            data['status'] == 'RESOLVED' || data['status'] == 'FALSE_ALARM';
+        if (isResolved) {
+          setState(() => _activeSOS = null);
+        } else {
+          setState(() => _activeSOS = data);
+        }
+      }
+    });
+  }
+
+  /// Poll for active SOS alerts on startup (in case one was already active)
+  Future<void> _checkActiveSOS() async {
+    try {
+      final alerts = await ApiService.getActiveSOSAlerts();
+      if (mounted && alerts.isNotEmpty) {
+        setState(() => _activeSOS = alerts.first);
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _syncSub?.cancel();
+    super.dispose();
   }
 
   /// Reads username from in-memory cache — returns almost instantly.
@@ -37,17 +87,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _fetchDashboardData() async {
-    // ── Run both network calls in PARALLEL — saves ~500–800ms vs sequential ──
+    // 1. Immediately load today's Health Connect snapshot for live vitals
+    final cachedSnapshot = await HealthService.instance.getLastCachedSnapshot();
+    if (cachedSnapshot != null && mounted) {
+      setState(() {
+        final steps = (cachedSnapshot['steps'] as num?)?.toDouble() ?? 0;
+        final sleep = (cachedSnapshot['sleep_hours'] as num?)?.toDouble() ?? 0;
+        final spo2  = (cachedSnapshot['spo2'] as num?)?.toDouble() ?? 0;
+        if (steps > 0) _avgSteps = steps;
+        if (sleep > 0) _avgSleep = sleep;
+        if (spo2  > 0) _avgSpO2  = spo2;
+      });
+    }
+
+    // 2. Trigger a fresh Health Connect fetch in background
+    HealthService.instance.fetchTodaySnapshot().then((snapshot) {
+      if (mounted) {
+        setState(() {
+          final steps = (snapshot['steps'] as num?)?.toDouble() ?? 0;
+          final sleep = (snapshot['sleep_hours'] as num?)?.toDouble() ?? 0;
+          final spo2  = (snapshot['spo2'] as num?)?.toDouble() ?? 0;
+          if (steps > 0) _avgSteps = steps;
+          if (sleep > 0) _avgSleep = sleep;
+          if (spo2  > 0) _avgSpO2  = spo2;
+        });
+      }
+    }).catchError((e) => debugPrint('[Dashboard] Health snapshot error: $e'));
+
+    // 3. Fetch backend data (family members, history) in parallel
     final results = await Future.wait([
       ApiService.getFamilyMembers(),
       ApiService.getHealthData(),
+      ApiService.getUnreadNotificationCount(),
     ]);
 
-    final List<dynamic> members    = results[0];
-    final List<dynamic> healthData = results[1];
+    final List<dynamic> members    = results[0] as List<dynamic>;
+    final List<dynamic> healthData = results[1] as List<dynamic>;
+    final int unreadCount          = results[2] as int;
 
-    double avgSleep = 0, avgSteps = 0, avgSpO2 = 0;
-    if (healthData.isNotEmpty) {
+    // Only use backend history averages if Health Connect gave us nothing
+    if (healthData.isNotEmpty && _avgSteps == 0 && _avgSleep == 0 && _avgSpO2 == 0) {
       double totalSleep = 0, totalSteps = 0, totalSpO2 = 0;
       final count = healthData.length;
       for (var record in healthData) {
@@ -55,21 +134,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
         totalSteps += (record['steps']       as num? ?? 0).toDouble();
         totalSpO2  += (record['oxygen_level'] as num? ?? 0).toDouble();
       }
-      avgSleep = totalSleep / count;
-      avgSteps = totalSteps / count;
-      avgSpO2  = totalSpO2  / count;
+      if (mounted) {
+        setState(() {
+          if (totalSteps > 0) _avgSteps = totalSteps / count;
+          if (totalSleep > 0) _avgSleep = totalSleep / count;
+          if (totalSpO2  > 0) _avgSpO2  = totalSpO2  / count;
+        });
+      }
     }
 
     if (mounted) {
       setState(() {
-        _members    = members;
-        _avgSleep   = avgSleep;
-        _avgSteps   = avgSteps;
-        _avgSpO2    = avgSpO2;
-        _isLoading  = false;
+        _members          = members;
+        _unreadNotifCount = unreadCount;
+        _isLoading        = false;
       });
     }
   }
+
 
 
   Color _getRoleColor(String label) {
@@ -90,163 +172,183 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: RefreshIndicator(
-        color: const Color(0xFF14B8A6),
-        onRefresh: _fetchDashboardData,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverAppBar(
-              expandedHeight: 140,
-              floating: false,
-              pinned: true,
-              backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFF0F172A),
-              flexibleSpace: FlexibleSpaceBar(
-                background: Container(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: RefreshIndicator(
+          color: const Color(0xFF14B8A6),
+          onRefresh: _fetchDashboardData,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(
+                child: Container(
+                  width: double.infinity,
                   decoration: const BoxDecoration(
                     gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xFF000000), Color(0xFF070D18), Color(0xFF0F172A)],
                     ),
+                    borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black38,
+                        blurRadius: 12,
+                        offset: Offset(0, 4),
+                      ),
+                    ],
                   ),
-                  padding: const EdgeInsets.fromLTRB(20, 60, 20, 20),
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    MediaQuery.of(context).padding.top + 16,
+                    20,
+                    24,
+                  ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Column(
-                        mainAxisAlignment: MainAxisAlignment.end,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Hello, $_username 👋',
-                            style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                          const Text('Family Health Hub',
-                            style: TextStyle(color: Colors.white, fontSize: 24,
-                              fontWeight: FontWeight.bold)),
+                          Text('${TranslationService.translate('hello')}, $_username 👋',
+                            style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500)),
+                          const SizedBox(height: 4),
+                          Text(TranslationService.translate('family_health_hub'),
+                            style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                         ],
                       ),
-                      Semantics(
-                        label: 'Settings',
-                        button: true,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () async {
-                            await Navigator.push(context,
-                              MaterialPageRoute(builder: (_) => const SettingsScreen()));
-                            _fetchDashboardData();
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(12),
+                       Row(
+                        children: [
+                          Semantics(
+                            label: 'Settings',
+                            button: true,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () async {
+                                await Navigator.push(context,
+                                  MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                                _fetchDashboardData();
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: const Icon(Icons.settings_rounded, color: Colors.white, size: 22),
+                              ),
                             ),
-                            child: const Icon(Icons.settings_rounded, color: Colors.white70, size: 20),
                           ),
-                        ),
+                        ],
                       ),
                     ],
                   ),
                 ),
               ),
-            ),
+              if (_activeSOS != null && (_activeSOS!['triggered_by'] ?? _activeSOS!['username']) != _username)
+                SliverToBoxAdapter(
+                  child: Container(
+                    margin: const EdgeInsets.only(left: 16, right: 16, top: 16),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.red[50],
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.red.shade300, width: 1.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 24),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '🚨 ${TranslationService.translate('emergency_alert')}',
+                                style: TextStyle(
+                                  color: Colors.red.shade900,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${_activeSOS!['triggered_by'] ?? _activeSOS!['username'] ?? 'A family member'} ${TranslationService.translate('needs_help')}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Message: "${_activeSOS!['message'] ?? 'I need help immediately.'}"',
+                          style: TextStyle(color: Colors.grey[800], fontSize: 13),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            if (_activeSOS!['location_lat'] != null && _activeSOS!['location_lng'] != null)
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                  icon: const Icon(Icons.map_outlined, size: 16),
+                                  label: Text(TranslationService.translate('track'), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                  onPressed: () async {
+                                    final lat = _activeSOS!['location_lat'];
+                                    final lng = _activeSOS!['location_lng'];
+                                    final mapsUrl = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+                                    if (await canLaunchUrl(mapsUrl)) {
+                                      await launchUrl(mapsUrl, mode: LaunchMode.externalApplication);
+                                    }
+                                  },
+                                ),
+                              ),
+                            if (_activeSOS!['location_lat'] != null && _activeSOS!['location_lng'] != null)
+                              const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.red,
+                                  side: const BorderSide(color: Colors.red),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                child: Text(TranslationService.translate('dismiss'), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                onPressed: () async {
+                                  final alertId = _activeSOS!['id'];
+                                  setState(() {
+                                    _activeSOS = null;
+                                  });
+                                  if (alertId != null) {
+                                    await ApiService.resolveSOSAlert(alertId is int ? alertId : int.parse(alertId.toString()));
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             SliverPadding(
               padding: const EdgeInsets.all(16),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-                  // SOS Banner
-                  GestureDetector(
-                    onTap: () {
-                      showDialog(
-                        context: context,
-                        builder: (context) => AlertDialog(
-                          title: const Text('Emergency SOS'),
-                          content: const Text('Are you sure you want to trigger an emergency alert to all family members and contacts?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Cancel'),
-                            ),
-                            TextButton(
-                              style: TextButton.styleFrom(foregroundColor: Colors.red),
-                              onPressed: () async {
-                                Navigator.pop(context);
-                                
-                                // Fetch real GPS
-                                final position = await LocationService.getCurrentPosition();
-                                final double lat = position?.latitude ?? 0.0;
-                                final double lng = position?.longitude ?? 0.0;
-
-                                if (position != null) {
-                                  await ApiService.updateLocation(lat: lat, lng: lng);
-                                }
-
-                                final success = await ApiService.triggerSOS(lat: lat, lng: lng);
-                                
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(success 
-                                          ? '🚨 SOS Alert sent to all family members!' 
-                                          : '❌ Failed to send SOS alert.'),
-                                      backgroundColor: success ? Colors.red : Colors.grey[800],
-                                    ),
-                                  );
-                                }
-                              },
-                              child: const Text('SEND SOS'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 20),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(color: const Color(0xFFEF4444).withValues(alpha: 0.4),
-                            blurRadius: 12, offset: const Offset(0, 4)),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.shield_rounded, color: Colors.white, size: 32),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Emergency SOS',
-                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                                Text('All family safe • Tap to alert',
-                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 12)),
-                              ],
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Text('SOS', style: TextStyle(color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-  
                   // Family Map Button
                   Padding(
                     padding: const EdgeInsets.only(bottom: 20),
@@ -259,7 +361,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),
                         icon: const Icon(Icons.map_rounded, color: Colors.white),
-                        label: const Text('View Live Family Map', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                        label: Text(TranslationService.translate('live_family_map'), style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                         onPressed: () {
                           Navigator.push(context, MaterialPageRoute(builder: (_) => const LiveLocationScreen()));
                         },
@@ -268,10 +370,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   
                   // Section title
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: Text('Family Overview',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(TranslationService.translate('family_overview'),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
                         color: Color(0xFF14B8A6))),
                   ),
   
@@ -305,19 +407,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   
                   // Stats Row
                   if (!_isLoading) ...[
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text('Your Personal Vitals Averages',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold,
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(TranslationService.translate('personal_vitals'),
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold,
                           color: Color(0xFF14B8A6))),
                     ),
                     Row(
                       children: [
-                        Expanded(child: _buildStatCard('Sleep', '${_avgSleep.toStringAsFixed(1)} hrs', Icons.bedtime_rounded, const Color(0xFF6366F1))),
+                        Expanded(child: _buildStatCard(TranslationService.translate('sleep'), '${_avgSleep.toStringAsFixed(1)} hrs', Icons.bedtime_rounded, const Color(0xFF6366F1))),
                         const SizedBox(width: 10),
-                        Expanded(child: _buildStatCard('Steps', _avgSteps >= 1000 ? '${(_avgSteps / 1000.0).toStringAsFixed(1)}k' : '${_avgSteps.toInt()}', Icons.directions_walk_rounded, const Color(0xFF14B8A6))),
+                        Expanded(child: _buildStatCard(TranslationService.translate('steps'), _avgSteps >= 1000 ? '${(_avgSteps / 1000.0).toStringAsFixed(1)}k' : '${_avgSteps.toInt()}', Icons.directions_walk_rounded, const Color(0xFF14B8A6))),
                         const SizedBox(width: 10),
-                        Expanded(child: _buildStatCard('SpO2', '${_avgSpO2.toStringAsFixed(0)}%', Icons.water_drop_rounded, const Color(0xFFEF4444))),
+                        Expanded(child: _buildStatCard(TranslationService.translate('oxygen'), '${_avgSpO2.toStringAsFixed(0)}%', Icons.water_drop_rounded, const Color(0xFFEF4444))),
                       ],
                     ),
                   ],
@@ -329,8 +431,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildFamilyCard(dynamic member) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -341,6 +444,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final isApproved = member['is_approved'] == true;
     final statusText = isApproved ? 'Active' : 'Pending';
     final roleColor = _getRoleColor(role);
+
+    // Extract real health metrics synced from Google Fit / Health Connect
+    final healthRecord = member['latest_health_record'] as Map<String, dynamic>?;
+    final int hr = healthRecord?['heart_rate'] != null ? (healthRecord!['heart_rate'] as num).toInt() : 0;
+    final int steps = healthRecord?['steps'] != null ? (healthRecord!['steps'] as num).toInt() : 0;
+    final double spo2 = healthRecord?['oxygen_level'] != null ? (healthRecord!['oxygen_level'] as num).toDouble() : 0.0;
+    final double sleep = healthRecord?['sleep_hours'] != null ? (healthRecord!['sleep_hours'] as num).toDouble() : 0.0;
+
+    final String hrText = hr > 0 ? '$hr bpm' : '-- bpm';
+    final String stepsText = steps >= 1000 ? '${(steps / 1000.0).toStringAsFixed(1)}k' : (steps > 0 ? '$steps' : '-- steps');
 
     return GestureDetector(
       onTap: () {
@@ -359,8 +472,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 12),
                 Text('Role: $role', style: const TextStyle(fontWeight: FontWeight.w500)),
                 if (email.isNotEmpty) Text('Email: $email', style: const TextStyle(color: Color(0xFF64748B))),
-                const SizedBox(height: 12),
-                const Text('More detailed health metrics and location data will appear here once connected to their wearable devices!', textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      Column(
+                        children: [
+                          const Icon(Icons.favorite, color: Color(0xFFEF4444), size: 20),
+                          const SizedBox(height: 4),
+                          Text(hrText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const Text('Heart Rate', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                        ],
+                      ),
+                      Column(
+                        children: [
+                          const Icon(Icons.directions_walk, color: Color(0xFF14B8A6), size: 20),
+                          const SizedBox(height: 4),
+                          Text(stepsText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const Text('Steps Today', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                        ],
+                      ),
+                      Column(
+                        children: [
+                          const Icon(Icons.water_drop, color: Color(0xFF3B82F6), size: 20),
+                          const SizedBox(height: 4),
+                          Text(spo2 > 0 ? '${spo2.toStringAsFixed(0)}%' : '--%', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const Text('SpO2', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                        ],
+                      ),
+                      Column(
+                        children: [
+                          const Icon(Icons.bedtime, color: Color(0xFF6366F1), size: 20),
+                          const SizedBox(height: 4),
+                          Text(sleep > 0 ? '${sleep.toStringAsFixed(1)}h' : '--h', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const Text('Sleep', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 24),
                 SizedBox(
                   width: double.infinity,
@@ -429,12 +585,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 children: [
                   const Icon(Icons.favorite, color: Color(0xFFEF4444), size: 12),
                   const SizedBox(width: 4),
-                  Text(isApproved ? '72 bpm' : '-- bpm',
+                  Text(hrText,
                     style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
                   const SizedBox(width: 8),
                   const Icon(Icons.directions_walk, color: Color(0xFF14B8A6), size: 12),
                   const SizedBox(width: 4),
-                  Text(isApproved ? '5.4k' : '-- steps',
+                  Text(stepsText,
                     style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
                 ],
               ),

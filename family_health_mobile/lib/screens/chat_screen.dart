@@ -54,17 +54,36 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _fetchChatData() async {
-    final conversations = await ApiService.getConversations();
+    final conversations = await ApiService.getConversations(forceRefresh: true);
     if (conversations.isNotEmpty) {
       _conversationId = conversations[0]['id'];
       final msgs = await ApiService.getChatMessages(_conversationId!);
       if (mounted) {
         setState(() {
-          _messages = msgs.reversed.toList(); // Assuming API returns oldest first or we want newest at bottom
+          _messages = msgs.reversed.toList();
           _isLoading = false;
         });
       }
     } else {
+      // No conversations yet — auto-create one from the user's first family group.
+      final groups = await ApiService.getFamilyGroups(forceRefresh: true);
+      if (groups.isNotEmpty) {
+        final group = groups[0];
+        final groupId = group['id'];
+        final groupName = group['name'] ?? 'Family Group';
+        final created = await ApiService.getOrCreateFamilyGroupChat(groupId, groupName);
+        if (created != null) {
+          _conversationId = created['id'];
+          final msgs = await ApiService.getChatMessages(_conversationId!);
+          if (mounted) {
+            setState(() {
+              _messages = msgs.reversed.toList();
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+      }
       if (mounted) setState(() => _isLoading = false);
     }
   }

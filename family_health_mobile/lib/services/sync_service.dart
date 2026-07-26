@@ -26,7 +26,6 @@ class SyncService {
   SyncService._internal();
 
   // ── Base WS URL ────────────────────────────────────────────────────────────
-  static String get _apiBase => AppConfig.apiBaseUrl;
   static String get _wsBase {
     final base = AppConfig.apiBaseUrl;
     if (base.startsWith('https://')) {
@@ -81,7 +80,13 @@ class SyncService {
 
   // ── Internal ───────────────────────────────────────────────────────────────
 
-  bool _isOpen() => _channel != null;
+  /// Returns true only if the channel exists AND the handshake completed.
+  /// After a WiFi switch the old channel object lingers but the underlying
+  /// socket is dead — checking the ready future would throw, so we track a
+  /// separate flag instead.
+  bool _connected = false;
+
+  bool _isOpen() => _channel != null && _connected;
 
   Future<void> _open() async {
     final token = await AuthService.getToken();
@@ -93,6 +98,7 @@ class SyncService {
       // Await handshake — catches SocketException / WebSocketChannelException
       // that would otherwise surface as unhandled errors on the stream.
       await _channel!.ready;
+      _connected = true;
       _channel!.stream.listen(
         (data) {
           try {
@@ -109,12 +115,14 @@ class SyncService {
     } catch (e) {
       // Swallow connection errors (host unreachable, no network, etc.)
       // _onDisconnect will schedule a retry with exponential back-off.
+      _connected = false;
       _channel = null;
       _onDisconnect();
     }
   }
 
   void _onDisconnect() {
+    _connected = false;
     _channel = null;
     if (_manualDisconnect) return;
     if (_retryCount >= _maxRetries) return;
@@ -137,11 +145,18 @@ class SyncService {
       _isOnline = online;
 
       if (online && wasOffline) {
-        // Back online — reconnect WS
-        if (!_isOpen()) {
-          _retryCount = 0;
-          await _open();
-        }
+        // Network switched — drop stale HTTP connections and API caches
+        // so the first request after reconnect uses a fresh socket.
+        ApiService.recreateClient();
+        ApiService.clearAllCaches();
+
+        // Reconnect WebSocket — close the stale channel first if still around
+        try { _channel?.sink.close(); } catch (_) {}
+        _connected = false;
+        _channel = null;
+        _retryCount = 0;
+        await _open();
+
         // Flush offline queue
         if (OfflineQueueService.instance.hasPending) {
           final flushed = await OfflineQueueService.instance.flush(

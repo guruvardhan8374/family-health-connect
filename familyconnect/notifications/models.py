@@ -7,6 +7,8 @@ class Notification(models.Model):
         ('REMINDER', 'Reminder'),
         ('EMERGENCY', 'Emergency SOS'),
         ('SYSTEM', 'System'),
+        ('FAMILY', 'Family'),
+        ('CHAT', 'Chat'),
         ('MEDICINE', 'Medicine'),
         ('WATER', 'Water Intake'),
         ('SLEEP', 'Sleep'),
@@ -24,13 +26,27 @@ class Notification(models.Model):
         on_delete=models.CASCADE,
         related_name='notifications'
     )
+    family_group = models.ForeignKey(
+        'family.FamilyGroup',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='notifications'
+    )
     type = models.CharField(max_length=20, choices=NOTIFICATION_TYPES, default='SYSTEM')
     title = models.CharField(max_length=150)
     message = models.TextField()
     is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
     data = models.JSONField(default=dict, blank=True)
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='NORMAL')
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'is_read']),
+        ]
 
     def __str__(self):
         return f"{self.title} for {self.user.username} ({self.priority})"

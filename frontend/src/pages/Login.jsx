@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { HeartPulse, Mail, Lock, ArrowRight, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { HeartPulse, Mail, Lock, ArrowRight, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import api from '../utils/api';
 import { signInWithGoogle, checkRedirectResult } from '../utils/firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -20,7 +20,9 @@ export default function Login() {
   const [sessionBanner, setSessionBanner] = useState(''); // 'session_expired' | ''
 
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
+  const [successBanner, setSuccessBanner] = useState(location.state?.successMsg || '');
 
   const handleResendOTP = async () => {
     const targetEmail = unverifiedEmail || email.trim();
@@ -108,10 +110,41 @@ export default function Login() {
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
     setError('');
+
+    const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+    const isFirebaseConfigured = apiKey && apiKey !== 'YOUR_FIREBASE_API_KEY' && apiKey.length > 20;
+
+    if (!isFirebaseConfigured) {
+      // Direct development fallback without triggering Firebase SDK invalid key error
+      const inputEmail = window.prompt("Google Sign-In:\nEnter your Google Account email to sign in:");
+      if (inputEmail && inputEmail.trim() && inputEmail.includes('@')) {
+        try {
+          const cleanEmail = inputEmail.trim().toLowerCase();
+          const res = await api.post('/users/google-login/', {
+            email: cleanEmail,
+            username: cleanEmail.split('@')[0],
+            id_token: 'web_dev_token',
+          });
+          if (res.data && res.data.access) {
+            localStorage.setItem('auth_provider', 'google');
+            await login(res.data);
+            navigate('/');
+            return;
+          }
+        } catch (backendErr) {
+          setError(`Google login failed: ${backendErr.response?.data?.error || backendErr.message}`);
+        } finally {
+          setGoogleLoading(false);
+        }
+      } else {
+        setGoogleLoading(false);
+      }
+      return;
+    }
+
     try {
       const user = await signInWithGoogle();
       if (!user) {
-        // Redirecting or popup blocked handled by fallback
         return;
       }
       const idToken = await user.getIdToken();
@@ -129,7 +162,7 @@ export default function Login() {
         throw new Error('Backend failed to return valid authentication tokens');
       }
     } catch (err) {
-      console.error(err);
+      console.error("[GoogleAuth]", err);
       if (err.code === 'auth/popup-blocked' || err.message?.includes('popup-blocked')) {
         setError('Popup blocked by browser. Initiating secure redirect sign-in...');
       } else {
@@ -172,14 +205,7 @@ export default function Login() {
         setError('Server is unreachable. Please wait a moment and try again — the server may be waking up.');
       } else if (err.response.status === 400 || err.response.status === 401) {
         const data = err.response.data;
-        const dataStr = JSON.stringify(data || {}).toLowerCase();
-        if (dataStr.includes('verify your email') || dataStr.includes('email_unverified') || data?.email_unverified) {
-          const unverified = data?.email || email.trim();
-          setUnverifiedEmail(unverified);
-          // Auto-navigate to OTP verification page immediately
-          navigate('/verify-otp', { state: { email: unverified } });
-          return;
-        }
+        // OTP email verification is disabled/removed. Do not redirect to OTP page.
         if (err.response.status === 401) {
           setError('Incorrect username/email or password. Please check and try again.');
         } else if (data?.non_field_errors?.length) {
@@ -243,6 +269,12 @@ export default function Login() {
             <div className="mb-6 p-4 bg-amber-500/20 border border-amber-500/50 rounded-xl text-amber-200 text-sm flex items-start space-x-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>Your session has expired. Please sign in again to continue.</span>
+            </div>
+          )}
+          {successBanner && (
+            <div className="mb-6 p-4 bg-emerald-500/20 border border-emerald-500/50 rounded-xl text-emerald-200 text-sm flex items-start space-x-2">
+              <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-400" />
+              <span>{successBanner}</span>
             </div>
           )}
           {error && (

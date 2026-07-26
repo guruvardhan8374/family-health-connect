@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "663207086705",
+    "project_id": "family-health-connect",
+    "storage_bucket": "family-health-connect.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:663207086705:android:cebd2ca1ed8f23ca1329d0",
+        "android_client_info": {
+          "package_name": "com.familyhealth.family_health_mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "663207086705-10sr7anciih8v9bvps0c0los21o0ul7s.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCca_biyC_m0UwukPfMBwIPNDTloS1XN9I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "663207086705-10sr7anciih8v9bvps0c0los21o0ul7s.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

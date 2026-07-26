@@ -64,6 +64,56 @@ def _check_and_create_alerts(snapshot: HealthSnapshot):
         )
         alerts_created.append(alert)
 
+    # Check Blood Pressure thresholds
+    if snapshot.blood_pressure:
+        try:
+            parts = snapshot.blood_pressure.split('/')
+            sys = int(parts[0])
+            dia = int(parts[1])
+            if sys > 140 or dia > 90:
+                alert = HealthAlert.objects.create(
+                    user=snapshot.user,
+                    alert_type='HIGH_BP',
+                    severity='CRITICAL',
+                    title='High Blood Pressure Detected',
+                    message=f'Your blood pressure is {snapshot.blood_pressure}, which is above the healthy range of 140/90.',
+                    snapshot=snapshot,
+                )
+                alerts_created.append(alert)
+        except Exception:
+            pass
+
+    # Check Steps and Sleep targets (warning alerts)
+    try:
+        from .models import HealthGoal
+        goal = HealthGoal.objects.filter(user=snapshot.user).first()
+        steps_goal = goal.steps_goal if goal else 10000
+        sleep_goal = goal.sleep_goal if goal else 8.0
+
+        if snapshot.steps is not None and 0 < snapshot.steps < steps_goal:
+            alert = HealthAlert.objects.create(
+                user=snapshot.user,
+                alert_type='LOW_STEPS',
+                severity='WARNING',
+                title='Missed Step Goal',
+                message=f'You have completed {snapshot.steps} steps today, which is below your daily goal of {steps_goal}.',
+                snapshot=snapshot,
+            )
+            alerts_created.append(alert)
+
+        if snapshot.sleep_hours is not None and 0 < snapshot.sleep_hours < sleep_goal:
+            alert = HealthAlert.objects.create(
+                user=snapshot.user,
+                alert_type='POOR_SLEEP',
+                severity='WARNING',
+                title='Poor Sleep Detected',
+                message=f'You slept for {snapshot.sleep_hours:.1f} hours, below your target goal of {sleep_goal:.1f} hours.',
+                snapshot=snapshot,
+            )
+            alerts_created.append(alert)
+    except Exception as e:
+        logger.warning(f'Failed to check steps/sleep goals for alert: {e}')
+
     # Broadcast to WebSocket group
     if alerts_created:
         try:
@@ -93,11 +143,11 @@ def _broadcast_snapshot(snapshot: HealthSnapshot):
     """Broadcast a health.update event to React dashboard and any listeners."""
     try:
         channel_layer = get_channel_layer()
-        group = f'health_{snapshot.user.id}'
         payload = {
             'type': 'health.update',
             'snapshot': {
                 'id': snapshot.id,
+                'user_id': snapshot.user.id,
                 'recorded_at': snapshot.recorded_at.isoformat(),
                 'heart_rate': snapshot.heart_rate,
                 'steps': snapshot.steps,
@@ -112,7 +162,20 @@ def _broadcast_snapshot(snapshot: HealthSnapshot):
                 'blood_pressure': snapshot.blood_pressure,
             },
         }
+        
+        # Broadcast to personal group
+        group = f'health_{snapshot.user.id}'
         async_to_sync(channel_layer.group_send)(group, payload)
+        
+        # Broadcast to family groups
+        from family.models import FamilyMembership
+        family_ids = FamilyMembership.objects.filter(
+            user=snapshot.user, status='ACTIVE', is_approved=True
+        ).values_list('family_group_id', flat=True)
+        
+        for fid in family_ids:
+            async_to_sync(channel_layer.group_send)(f'family_health_{fid}', payload)
+            
     except Exception as e:
         logger.warning(f'Failed to broadcast health snapshot via WebSocket: {e}')
 
@@ -228,7 +291,7 @@ class HealthSummaryView(APIView):
             dates = [start + timedelta(days=i) for i in range(days)]
             labels = [d.strftime('%a') for d in dates]
 
-            # Aggregate per day
+            # Aggregate per day — use Max for cumulative metrics (steps, calories, distance)
             qs = (
                 HealthSnapshot.objects
                 .filter(user=user, recorded_at__date__gte=start)
@@ -236,24 +299,24 @@ class HealthSummaryView(APIView):
                 .values('day')
                 .annotate(
                     avg_hr=Avg('heart_rate'),
-                    total_steps=Sum('steps'),
-                    total_calories=Sum('calories'),
-                    total_distance=Sum('distance'),
+                    total_steps=Max('steps'),
+                    total_calories=Max('calories'),
+                    total_distance=Max('distance'),
                     avg_sleep=Avg('sleep_hours'),
                     avg_spo2=Avg('spo2'),
-                    total_hydration=Sum('hydration'),
+                    total_hydration=Max('hydration'),
                 )
                 .order_by('day')
             )
             data_by_day = {row['day']: row for row in qs}
 
             heart_rate = [_safe_round(data_by_day.get(d, {}).get('avg_hr')) for d in dates]
-            steps      = [_safe_round(data_by_day.get(d, {}).get('total_steps'), 0) or 0 for d in dates]
-            calories   = [_safe_round(data_by_day.get(d, {}).get('total_calories'), 0) or 0 for d in dates]
-            distance   = [_safe_round(data_by_day.get(d, {}).get('total_distance')) or 0 for d in dates]
+            steps      = [_safe_round(data_by_day.get(d, {}).get('total_steps'), 0) for d in dates]
+            calories   = [_safe_round(data_by_day.get(d, {}).get('total_calories'), 0) for d in dates]
+            distance   = [_safe_round(data_by_day.get(d, {}).get('total_distance')) for d in dates]
             sleep      = [_safe_round(data_by_day.get(d, {}).get('avg_sleep')) for d in dates]
             spo2       = [_safe_round(data_by_day.get(d, {}).get('avg_spo2')) for d in dates]
-            hydration  = [_safe_round(data_by_day.get(d, {}).get('total_hydration')) or 0 for d in dates]
+            hydration  = [_safe_round(data_by_day.get(d, {}).get('total_hydration')) for d in dates]
 
         elif range_param == 'weekly':
             # Last 4 weeks
@@ -268,25 +331,25 @@ class HealthSummaryView(APIView):
                 .values('week')
                 .annotate(
                     avg_hr=Avg('heart_rate'),
-                    total_steps=Sum('steps'),
-                    total_calories=Sum('calories'),
-                    total_distance=Sum('distance'),
+                    total_steps=Max('steps'),
+                    total_calories=Max('calories'),
+                    total_distance=Max('distance'),
                     avg_sleep=Avg('sleep_hours'),
                     avg_spo2=Avg('spo2'),
-                    total_hydration=Sum('hydration'),
+                    total_hydration=Max('hydration'),
                 )
                 .order_by('week')
             )
             data_list = list(qs)
-            _pad = lambda field, agg_fn: [_safe_round(row.get(field)) or 0 for row in data_list]
+            _pad = lambda field, agg_fn: [_safe_round(row.get(field)) for row in data_list]
 
             heart_rate = [_safe_round(r.get('avg_hr')) for r in data_list]
-            steps      = [_safe_round(r.get('total_steps'), 0) or 0 for r in data_list]
-            calories   = [_safe_round(r.get('total_calories'), 0) or 0 for r in data_list]
-            distance   = [_safe_round(r.get('total_distance')) or 0 for r in data_list]
+            steps      = [_safe_round(r.get('total_steps'), 0) for r in data_list]
+            calories   = [_safe_round(r.get('total_calories'), 0) for r in data_list]
+            distance   = [_safe_round(r.get('total_distance')) for r in data_list]
             sleep      = [_safe_round(r.get('avg_sleep')) for r in data_list]
             spo2       = [_safe_round(r.get('avg_spo2')) for r in data_list]
-            hydration  = [_safe_round(r.get('total_hydration')) or 0 for r in data_list]
+            hydration  = [_safe_round(r.get('total_hydration')) for r in data_list]
             labels     = labels[:len(data_list)]
 
         elif range_param == 'monthly':
@@ -340,6 +403,13 @@ class HealthSummaryView(APIView):
         latest_hr   = _safe_round(latest.heart_rate) if latest else None
         latest_spo2 = _safe_round(latest.spo2) if latest else None
         latest_bmi  = _safe_round(latest.bmi) if latest else None
+        latest_weight = _safe_round(latest.weight) if latest else None
+        latest_sleep_light = _safe_round(latest.sleep_light) if latest else None
+        latest_sleep_deep  = _safe_round(latest.sleep_deep) if latest else None
+        latest_sleep_rem   = _safe_round(latest.sleep_rem) if latest else None
+        latest_sleep_awake = _safe_round(latest.sleep_awake) if latest else None
+        latest_body_fat    = _safe_round(latest.body_fat) if latest else None
+        latest_exercise_count = latest.exercise_count if (latest and latest.exercise_count is not None) else 0
 
         today_steps    = _safe_round(today_agg['total_steps'], 0)
         today_calories = _safe_round(today_agg['total_calories'], 0)
@@ -379,6 +449,13 @@ class HealthSummaryView(APIView):
             'latest_heart_rate': latest_hr,
             'latest_spo2': latest_spo2,
             'latest_bmi': latest_bmi,
+            'latest_weight': latest_weight,
+            'latest_sleep_light': latest_sleep_light,
+            'latest_sleep_deep': latest_sleep_deep,
+            'latest_sleep_rem': latest_sleep_rem,
+            'latest_sleep_awake': latest_sleep_awake,
+            'latest_body_fat': latest_body_fat,
+            'latest_exercise_count': latest_exercise_count,
             # Goals
             'goal': goal_data,
             'steps_progress': progress(today_steps, goal.steps_goal),
@@ -408,6 +485,10 @@ class FamilyHealthSummaryView(APIView):
             user=user, status='ACTIVE', is_approved=True
         ).select_related('family_group')
 
+        group_id = request.query_params.get('group_id')
+        if group_id:
+            memberships = memberships.filter(family_group_id=group_id)
+
         result = []
         seen_users = set()
 
@@ -425,11 +506,44 @@ class FamilyHealthSummaryView(APIView):
                 seen_users.add(member.id)
 
                 latest = HealthSnapshot.objects.filter(user=member).first()
+                snapshot_data = None
+                try:
+                    from settings_app.models import PrivacySettings
+                    privacy, _ = PrivacySettings.objects.get_or_create(user=member)
+                except Exception:
+                    privacy = None
+
+                if latest:
+                    if privacy:
+                        if privacy.health_data_visibility != 'PRIVATE':
+                            snapshot_data = HealthSnapshotSerializer(latest).data
+                            # Apply granular sharing mask
+                            if not privacy.share_heart_rate:
+                                snapshot_data['heart_rate'] = None
+                            if not privacy.share_steps:
+                                snapshot_data['steps'] = None
+                            if not privacy.share_calories:
+                                snapshot_data['calories'] = None
+                            if not privacy.share_sleep:
+                                snapshot_data['sleep_hours'] = None
+                                snapshot_data['sleep_light'] = None
+                                snapshot_data['sleep_deep'] = None
+                                snapshot_data['sleep_rem'] = None
+                                snapshot_data['sleep_awake'] = None
+                            if not privacy.share_spo2:
+                                snapshot_data['spo2'] = None
+                            if not privacy.share_weight:
+                                snapshot_data['weight'] = None
+                            if not privacy.share_blood_pressure:
+                                snapshot_data['blood_pressure'] = None
+                    else:
+                        snapshot_data = HealthSnapshotSerializer(latest).data
+
                 result.append({
                     'user_id': member.id,
                     'username': member.username,
                     'label': member_ship.label,
-                    'latest_snapshot': HealthSnapshotSerializer(latest).data if latest else None,
+                    'latest_snapshot': snapshot_data,
                 })
 
         return Response(result)
@@ -450,19 +564,35 @@ class HealthSummaryTodayView(APIView):
         user = request.user
         today = timezone.localdate()
 
-        # Sum steps logged today
+        # Max steps logged today (cumulative daily count)
         steps_today = HealthMetric.objects.filter(
             user=user,
             metric_type='STEPS',
             recorded_at__date=today
-        ).aggregate(total=Sum('value'))['total'] or 0.0
+        ).aggregate(total=Max('value'))['total'] or 0.0
 
-        # Sum distance logged today
+        if steps_today == 0.0:
+            snapshot_steps = HealthSnapshot.objects.filter(
+                user=user,
+                recorded_at__date=today
+            ).aggregate(total=Max('steps'))['total']
+            if snapshot_steps:
+                steps_today = float(snapshot_steps)
+
+        # Max distance logged today
         distance_today = HealthMetric.objects.filter(
             user=user,
             metric_type='DISTANCE',
             recorded_at__date=today
-        ).aggregate(total=Sum('value'))['total'] or 0.0
+        ).aggregate(total=Max('value'))['total'] or 0.0
+
+        if distance_today == 0.0:
+            snapshot_dist = HealthSnapshot.objects.filter(
+                user=user,
+                recorded_at__date=today
+            ).aggregate(total=Max('distance'))['total']
+            if snapshot_dist:
+                distance_today = float(snapshot_dist)
 
         # Latest heart rate reading (fallback to overall latest for better UX)
         latest_hr_obj = HealthMetric.objects.filter(

@@ -1,6 +1,6 @@
-import { Check, CheckCheck, FileText, Heart, Activity } from 'lucide-react';
+import { Check, CheckCheck, FileText, Heart, Activity, Trash2 } from 'lucide-react';
 
-export default function MessageBubble({ msg, isMe }) {
+export default function MessageBubble({ msg, isMe, onDelete }) {
   const renderContent = () => {
     switch (msg.message_type) {
       case 'IMAGE':
@@ -56,7 +56,7 @@ export default function MessageBubble({ msg, isMe }) {
   };
 
   return (
-    <div className={`flex items-end space-x-2 ${isMe ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex items-end space-x-2 group relative ${isMe ? 'justify-end' : 'justify-start'}`}>
       {!isMe && (
         <img 
           src={msg.sender_details?.profile_picture || 'https://i.pravatar.cc/150?u=user'} 
@@ -64,8 +64,8 @@ export default function MessageBubble({ msg, isMe }) {
           className="w-8 h-8 rounded-full mb-1 shadow-sm border border-white" 
         />
       )}
-      <div className="flex flex-col space-y-1 max-w-[75%] lg:max-w-[60%]">
-        <div className={`p-3 rounded-2xl shadow-sm relative group ${
+      <div className="flex flex-col space-y-1 max-w-[75%] lg:max-w-[60%] relative">
+        <div className={`p-3 rounded-2xl shadow-sm relative ${
           isMe 
             ? 'bg-brand-500 text-white rounded-br-sm' 
             : 'bg-white border border-navy-100 text-navy-900 rounded-bl-sm'
@@ -80,6 +80,15 @@ export default function MessageBubble({ msg, isMe }) {
           </div>
         </div>
       </div>
+      {onDelete && (
+        <button
+          onClick={() => onDelete(msg.id)}
+          className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-all"
+          title="Delete Message"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      )}
     </div>
   );
 }

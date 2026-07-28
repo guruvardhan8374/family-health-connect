@@ -292,6 +292,21 @@ export default function FamilyDirectory() {
     }
   };
 
+  const handleDeleteGroup = async () => {
+    if (!activeGroup) return;
+    if (!window.confirm(`Are you sure you want to delete "${activeGroup.name}"? All member links and chat history will be permanently deleted.`)) return;
+    try {
+      await api.delete(`/family/groups/${activeGroup.id}/`);
+      localStorage.removeItem('active_family_group_id');
+      setActiveGroup(null);
+      await fetchData();
+      alert(`Family circle deleted successfully.`);
+    } catch (err) {
+      console.error(err);
+      alert(getErrorMessage(err, "Failed to delete family circle. Only Circle Admin can delete it."));
+    }
+  };
+
 
   const handleUpdateRole = async (membershipId) => {
     const newRole = window.prompt(
@@ -494,8 +509,29 @@ export default function FamilyDirectory() {
             </div>
           )}
 
-          {/* New Circle & Join Actions */}
+          {/* Circle Chat, Delete, New Circle & Join Actions */}
           <div className="flex items-center space-x-2">
+            {activeGroup && (
+              <>
+                <a 
+                  href={`/chat?family_group_id=${activeGroup.id}`}
+                  className="px-5 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl text-sm transition-all flex items-center space-x-2 shadow-sm"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Circle Chat</span>
+                </a>
+                {isCurrentUserAdminOfActiveGroup() && (
+                  <button 
+                    onClick={handleDeleteGroup}
+                    className="px-4 py-3 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold rounded-2xl text-sm transition-all flex items-center space-x-1.5"
+                    title="Delete Family Circle"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete Circle</span>
+                  </button>
+                )}
+              </>
+            )}
             <button 
               onClick={() => setShowJoinModal(true)} 
               className="px-5 py-3 border border-navy-100 bg-white hover:bg-navy-50 text-navy-950 font-bold rounded-2xl text-sm transition-all flex items-center space-x-2"
@@ -641,7 +677,7 @@ export default function FamilyDirectory() {
                 <div className="px-8 py-5 bg-navy-50/40 flex justify-between items-center border-t border-navy-100">
                   <div className="flex space-x-2">
                     <a 
-                      href={`/chat`}
+                      href={`/chat?user_id=${membership.user}&family_group_id=${activeGroup?.id || ''}`}
                       title="Send Message" 
                       className="p-3 bg-white text-navy-600 rounded-2xl hover:bg-brand-500 hover:text-white transition-all shadow-sm border border-navy-100/50"
                     >

@@ -116,8 +116,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     // 3. Fetch backend data (family members, history) in parallel
     final results = await Future.wait([
-      ApiService.getFamilyMembers(),
-      ApiService.getHealthData(),
+      ApiService.getFamilyMembers(forceRefresh: true),
+      ApiService.getHealthData(forceRefresh: true),
       ApiService.getUnreadNotificationCount(),
     ]);
 

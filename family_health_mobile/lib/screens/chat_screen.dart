@@ -5,7 +5,18 @@ import '../services/auth_service.dart';
 import '../services/sync_service.dart';
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final int? initialFamilyGroupId;
+  final String? initialFamilyGroupName;
+  final int? targetUserId;
+  final String? targetUsername;
+
+  const ChatScreen({
+    super.key,
+    this.initialFamilyGroupId,
+    this.initialFamilyGroupName,
+    this.targetUserId,
+    this.targetUsername,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -15,6 +26,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _controller = TextEditingController();
   List<dynamic> _messages = [];
   bool _isLoading = true;
+  String? _errorMessage;
   int? _conversationId;
 
   String _myUsername = '';
@@ -54,26 +66,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _fetchChatData() async {
-    final conversations = await ApiService.getConversations(forceRefresh: true);
-    if (conversations.isNotEmpty) {
-      _conversationId = conversations[0]['id'];
-      final msgs = await ApiService.getChatMessages(_conversationId!);
-      if (mounted) {
-        setState(() {
-          _messages = msgs.reversed.toList();
-          _isLoading = false;
-        });
-      }
-    } else {
-      // No conversations yet — auto-create one from the user's first family group.
-      final groups = await ApiService.getFamilyGroups(forceRefresh: true);
-      if (groups.isNotEmpty) {
-        final group = groups[0];
-        final groupId = group['id'];
-        final groupName = group['name'] ?? 'Family Group';
-        final created = await ApiService.getOrCreateFamilyGroupChat(groupId, groupName);
-        if (created != null) {
-          _conversationId = created['id'];
+    if (mounted) setState(() { _isLoading = true; _errorMessage = null; });
+
+    // 1. Target 1:1 user chat if specified — stop here, don't fall through
+    if (widget.targetUserId != null) {
+      final created = await ApiService.getOrCreatePrivateConversation(widget.targetUserId!);
+      if (created != null && created['id'] != null) {
+        _conversationId = created['id'];
+        try {
           final msgs = await ApiService.getChatMessages(_conversationId!);
           if (mounted) {
             setState(() {
@@ -81,10 +81,60 @@ class _ChatScreenState extends State<ChatScreen> {
               _isLoading = false;
             });
           }
-          return;
+        } catch (e) {
+          if (mounted) setState(() { _isLoading = false; _errorMessage = 'Failed to load messages. Tap retry.'; });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _errorMessage = 'Could not start chat with ${widget.targetUsername ?? 'this user'}. Please check your connection and try again.';
+          });
         }
       }
-      if (mounted) setState(() => _isLoading = false);
+      return; // Always return — don't fall through to group logic
+    }
+
+    // 2. Fetch conversations (group chat path)
+    try {
+      final conversations = await ApiService.getConversations(forceRefresh: true);
+      
+      // Check if initialFamilyGroupId was passed
+      if (widget.initialFamilyGroupId != null) {
+        final match = conversations.firstWhere(
+          (c) => c['family_group'] == widget.initialFamilyGroupId || (c['family_group'] is Map && c['family_group']['id'] == widget.initialFamilyGroupId),
+          orElse: () => null,
+        );
+        if (match != null) {
+          _conversationId = match['id'];
+        } else {
+          final groupName = widget.initialFamilyGroupName ?? 'Family Circle';
+          final created = await ApiService.getOrCreateFamilyGroupChat(widget.initialFamilyGroupId!, groupName);
+          if (created != null && created['id'] != null) {
+            _conversationId = created['id'];
+          }
+        }
+      } else if (conversations.isNotEmpty) {
+        _conversationId = conversations[0]['id'];
+      } else {
+        final groups = await ApiService.getFamilyGroups(forceRefresh: true);
+        if (groups.isNotEmpty) {
+          final group = groups[0];
+          final created = await ApiService.getOrCreateFamilyGroupChat(group['id'], group['name'] ?? 'Family Group');
+          if (created != null && created['id'] != null) {
+            _conversationId = created['id'];
+          }
+        }
+      }
+
+      if (_conversationId != null) {
+        final msgs = await ApiService.getChatMessages(_conversationId!);
+        if (mounted) setState(() { _messages = msgs.reversed.toList(); _isLoading = false; });
+      } else {
+        if (mounted) setState(() { _isLoading = false; _errorMessage = 'No conversation found. Tap retry to try again.'; });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _isLoading = false; _errorMessage = 'Connection error. Please check your network and tap retry.'; });
     }
   }
 
@@ -122,13 +172,16 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           child: const Icon(Icons.people_rounded, color: Color(0xFF14B8A6), size: 20),
         ),
-        title: const Column(
+        title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Family Group', style: TextStyle(color: Color(0xFF0F172A),
-              fontWeight: FontWeight.bold, fontSize: 16)),
-            Text('Connected', style: TextStyle(color: Color(0xFF14B8A6),
-              fontSize: 11)),
+            Text(
+              widget.targetUsername != null && widget.targetUsername!.isNotEmpty
+                  ? 'Chat with ${widget.targetUsername}'
+                  : (widget.initialFamilyGroupName != null ? '${widget.initialFamilyGroupName} Group' : 'Family Group'),
+              style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const Text('Connected', style: TextStyle(color: Color(0xFF14B8A6), fontSize: 11)),
           ],
         ),
         actions: [
@@ -141,8 +194,34 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-      body: _isLoading 
+      body: _isLoading
         ? const Center(child: CircularProgressIndicator(color: Color(0xFF14B8A6)))
+        : _errorMessage != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.chat_bubble_outline_rounded, size: 56, color: Color(0xFF94A3B8)),
+                    const SizedBox(height: 16),
+                    Text(_errorMessage!, textAlign: TextAlign.center,
+                      style: const TextStyle(color: Color(0xFF64748B), fontSize: 14)),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF14B8A6),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                      icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                      label: const Text('Retry', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      onPressed: _fetchChatData,
+                    ),
+                  ],
+                ),
+              ),
+            )
         : Column(
         children: [
           Expanded(
@@ -181,25 +260,56 @@ class _ChatScreenState extends State<ChatScreen> {
                               style: TextStyle(color: Colors.grey[500], fontSize: 11,
                                 fontWeight: FontWeight.bold)),
                           ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: isMe ? const Color(0xFF14B8A6) : Colors.white,
-                            borderRadius: BorderRadius.only(
-                              topLeft: const Radius.circular(18),
-                              topRight: const Radius.circular(18),
-                              bottomLeft: Radius.circular(isMe ? 18 : 4),
-                              bottomRight: Radius.circular(isMe ? 4 : 18),
+                        GestureDetector(
+                          onLongPress: () async {
+                            final msgId = msg['id'];
+                            if (msgId == null) return;
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Delete Message'),
+                                content: const Text('Are you sure you want to delete this message?'),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              final success = await ApiService.deleteMessage(msgId);
+                              if (success && mounted) {
+                                setState(() {
+                                  _messages.removeWhere((m) => m['id'] == msgId);
+                                });
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Message deleted')),
+                                );
+                              }
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: isMe ? const Color(0xFF14B8A6) : Colors.white,
+                              borderRadius: BorderRadius.only(
+                                topLeft: const Radius.circular(18),
+                                topRight: const Radius.circular(18),
+                                bottomLeft: Radius.circular(isMe ? 18 : 4),
+                                bottomRight: Radius.circular(isMe ? 4 : 18),
+                              ),
+                              boxShadow: [
+                                BoxShadow(color: Colors.black.withValues(alpha: 0.05),
+                                  blurRadius: 4, offset: const Offset(0, 2))
+                              ],
                             ),
-                            boxShadow: [
-                              BoxShadow(color: Colors.black.withValues(alpha: 0.05),
-                                blurRadius: 4, offset: const Offset(0, 2))
-                            ],
+                            child: Text(text,
+                              style: TextStyle(
+                                color: isMe ? Colors.white : const Color(0xFF0F172A),
+                                fontSize: 14)),
                           ),
-                          child: Text(text,
-                            style: TextStyle(
-                              color: isMe ? Colors.white : const Color(0xFF0F172A),
-                              fontSize: 14)),
                         ),
                         Padding(
                           padding: const EdgeInsets.only(top: 4, left: 4, right: 4),

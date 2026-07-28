@@ -58,6 +58,9 @@ class AuthService {
     _cachedUsername = username;
     _cachedUserId   = userId;
 
+    // Clear stale API memory caches from previous user session
+    ApiService.clearAllCaches();
+
     final prefs = await _getPrefs();
     await Future.wait([
       prefs.setString(_tokenKey,       token),
@@ -92,6 +95,11 @@ class AuthService {
       prefs.setString(_phoneKey,      phoneNumber),
       prefs.setString(_bioKey,        bio),
     ]);
+  }
+
+  static Future<void> saveProfilePicture(String url) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(_profilePicKey, url);
   }
 
   static Future<String?> getToken() async {

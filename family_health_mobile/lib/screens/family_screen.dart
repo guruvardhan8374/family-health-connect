@@ -17,6 +17,7 @@ class FamilyScreen extends StatefulWidget {
 class _FamilyScreenState extends State<FamilyScreen> {
   List<dynamic> _members = [];
   List<dynamic> _groups = [];
+  int _selectedGroupIndex = 0;
   bool _isLoading = true;
   StreamSubscription? _syncSubscription;
 
@@ -111,6 +112,128 @@ class _FamilyScreenState extends State<FamilyScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  void _showDeleteCircleDialog() {
+    if (_groups.isEmpty) return;
+    int? selectedGroupId = _groups[_selectedGroupIndex.clamp(0, _groups.length - 1)]['id'];
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              title: const Row(
+                children: [
+                  Icon(Icons.delete_forever_rounded, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('Select Circle to Delete', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                ],
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Select which family circle you want to delete:',
+                      style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: _groups.map((group) {
+                            final gId = group['id'];
+                            final gName = group['name'] ?? 'Family Circle';
+                            final isSelected = selectedGroupId == gId;
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected ? Colors.red.withOpacity(0.08) : const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: isSelected ? Colors.red : const Color(0xFFE2E8F0),
+                                  width: isSelected ? 1.5 : 1.0,
+                                ),
+                              ),
+                              child: RadioListTile<int>(
+                                value: gId,
+                                groupValue: selectedGroupId,
+                                activeColor: Colors.red,
+                                title: Text(
+                                  gName,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: isSelected ? Colors.red : const Color(0xFF0F172A),
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  group['description'] ?? 'Family Group',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                                ),
+                                onChanged: (val) {
+                                  setModalState(() => selectedGroupId = val);
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.delete_forever_rounded, color: Colors.white, size: 18),
+                  label: const Text('Delete Selected Circle', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  onPressed: selectedGroupId == null
+                      ? null
+                      : () async {
+                          Navigator.pop(ctx);
+                          final targetGroup = _groups.firstWhere((g) => g['id'] == selectedGroupId, orElse: () => null);
+                          final gName = targetGroup != null ? (targetGroup['name'] ?? 'Circle') : 'Circle';
+                          setState(() => _isLoading = true);
+                          final ok = await ApiService.deleteFamilyGroup(selectedGroupId!);
+                          if (ok) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Family circle "$gName" deleted successfully.')),
+                              );
+                              _selectedGroupIndex = 0;
+                              _fetchMembers(forceRefresh: true);
+                            }
+                          } else {
+                            if (mounted) {
+                              setState(() => _isLoading = false);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Failed to delete circle. Only the Circle Head/Admin can delete it.')),
+                              );
+                            }
+                          }
+                        },
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -340,12 +463,35 @@ class _FamilyScreenState extends State<FamilyScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final activeIndex = _selectedGroupIndex.clamp(0, _groups.isEmpty ? 0 : _groups.length - 1);
+    final activeGroup = _groups.isNotEmpty ? _groups[activeIndex] : null;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Family Directory'),
         actions: [
+          if (_groups.isNotEmpty)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF14B8A6)),
+              onSelected: (val) {
+                if (val == 'delete_circle') {
+                  _showDeleteCircleDialog();
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'delete_circle',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_forever_rounded, color: Colors.red, size: 20),
+                      SizedBox(width: 8),
+                      Text('Delete Circle', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Color(0xFF14B8A6)),
             onPressed: () {
@@ -364,71 +510,143 @@ class _FamilyScreenState extends State<FamilyScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // All safe banner
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF14B8A6), Color(0xFF0D9488)],
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.check_circle_rounded, color: Colors.white, size: 28),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('All Family Members Safe',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                          Text('${_members.length} members tracked',
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 12)),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-                // My Family Group Code Banner
-                if (_groups.isNotEmpty)
-                  GestureDetector(
-                    onTap: () {
-                      final code = _groups[0]['family_code']?.toString() ?? '';
-                      final name = _groups[0]['name']?.toString() ?? 'My Group';
-                      if (code.isNotEmpty) _showFamilyCodeDialog(code, name);
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(14),
-                      margin: const EdgeInsets.only(bottom: 20),
+                  // Active Circle Switcher (if user is in multiple groups)
+                  if (_groups.length > 1)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                      margin: const EdgeInsets.only(bottom: 14),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF3B82F6).withValues(alpha: 0.1),
+                        color: const Color(0xFF14B8A6).withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.4)),
+                        border: Border.all(color: const Color(0xFF14B8A6).withValues(alpha: 0.3)),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.vpn_key_rounded, color: Color(0xFF3B82F6), size: 22),
-                          const SizedBox(width: 10),
+                          const Icon(Icons.people_alt_rounded, color: Color(0xFF14B8A6), size: 20),
+                          const SizedBox(width: 8),
+                          const Text('Active Circle:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          const SizedBox(width: 8),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Your Group Join Code',
-                                    style: TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold, fontSize: 13)),
-                                Text(
-                                  _groups[0]['family_code']?.toString() ?? '',
-                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 3),
-                                ),
-                              ],
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<int>(
+                                value: activeIndex,
+                                isExpanded: true,
+                                icon: const Icon(Icons.arrow_drop_down_rounded, color: Color(0xFF14B8A6)),
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A), fontSize: 14),
+                                onChanged: (newIdx) {
+                                  if (newIdx != null) {
+                                    setState(() => _selectedGroupIndex = newIdx);
+                                  }
+                                },
+                                items: List.generate(_groups.length, (i) {
+                                  return DropdownMenuItem<int>(
+                                    value: i,
+                                    child: Text(_groups[i]['name'] ?? 'Circle ${i + 1}'),
+                                  );
+                                }),
+                              ),
                             ),
                           ),
-                          const Icon(Icons.copy_rounded, color: Color(0xFF3B82F6), size: 18),
                         ],
                       ),
                     ),
+
+                  // All safe banner
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF14B8A6), Color(0xFF0D9488)],
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check_circle_rounded, color: Colors.white, size: 28),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('All Family Members Safe',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                            Text('${_members.length} members tracked',
+                                style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 12)),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
+
+                  // Active Family Group Code Banner
+                  if (activeGroup != null)
+                    GestureDetector(
+                      onTap: () {
+                        final code = activeGroup['family_code']?.toString() ?? '';
+                        final name = activeGroup['name']?.toString() ?? 'My Group';
+                        if (code.isNotEmpty) _showFamilyCodeDialog(code, name);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF3B82F6).withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.4)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.vpn_key_rounded, color: Color(0xFF3B82F6), size: 22),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('${activeGroup['name'] ?? 'Group'} Join Code',
+                                      style: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold, fontSize: 13)),
+                                  Text(
+                                    activeGroup['family_code']?.toString() ?? '',
+                                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 3),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.copy_rounded, color: Color(0xFF3B82F6), size: 18),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  if (activeGroup != null) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF6366F1),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          elevation: 0,
+                        ),
+                        icon: const Icon(Icons.forum_rounded, color: Colors.white, size: 20),
+                        label: Text(
+                          'Open "${activeGroup['name'] ?? 'Family Circle'}" Group Chat',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ChatScreen(
+                                initialFamilyGroupId: activeGroup['id'],
+                                initialFamilyGroupName: activeGroup['name'],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
 
                 if (_members.isEmpty)
                   Container(
@@ -563,40 +781,19 @@ class _FamilyScreenState extends State<FamilyScreen> {
                             ),
                           ],
                         ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.call_rounded, color: Color(0xFF14B8A6), size: 22),
-                              onPressed: () async {
-                                if (phone.toString().isNotEmpty) {
-                                  final url = Uri.parse('tel:${phone.toString().replaceAll(' ', '')}');
-                                  if (await canLaunchUrl(url)) {
-                                    await launchUrl(url);
-                                  } else {
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Could not open phone dialer.')),
-                                      );
-                                    }
-                                  }
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('No phone number registered for this member.')),
-                                  );
-                                }
-                              },
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.message_rounded, color: Color(0xFF6366F1), size: 22),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (_) => const ChatScreen()),
-                                );
-                              },
-                            ),
-                          ],
+                        trailing: IconButton(
+                          icon: const Icon(Icons.message_rounded, color: Color(0xFF6366F1), size: 22),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => ChatScreen(
+                                  targetUserId: member['user'],
+                                  targetUsername: username,
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                     );

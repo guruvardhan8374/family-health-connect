@@ -11,6 +11,8 @@ from django.db import connection
 import logging
 import uuid
 import os
+import mimetypes
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -422,9 +424,9 @@ class AvatarUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
-    ALLOWED_TYPES = {'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/octet-stream'}
-    ALLOWED_EXTS = {'jpg', 'jpeg', 'png', 'webp'}
-    MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+    ALLOWED_TYPES = {'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif', 'image/pjpeg', 'image/x-png', 'application/octet-stream', 'multipart/form-data'}
+    ALLOWED_EXTS = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif', 'tmp', 'raw', 'bin'}
+    MAX_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
     def _delete_old_avatar(self, user):
         """Remove old avatar file from disk if it was a locally stored file."""
@@ -450,7 +452,7 @@ class AvatarUploadView(APIView):
 
     def post(self, request):
         try:
-            file = request.FILES.get('avatar')
+            file = request.FILES.get('avatar') or request.FILES.get('profile_picture') or request.FILES.get('file') or request.FILES.get('image')
             if not file:
                 logger.warning(f"[AvatarUpload] No file provided in request.FILES for user {request.user.username}")
                 return Response({"error": "No file uploaded. Use field name 'avatar'."}, status=status.HTTP_400_BAD_REQUEST)
@@ -465,25 +467,18 @@ class AvatarUploadView(APIView):
                 f"filename={file.name}, size={file.size} bytes, content_type={content_type}, guessed={guessed_type}, ext={ext}"
             )
 
-            # Validate type & extension
-            is_valid_type = (content_type in self.ALLOWED_TYPES) or (guessed_type in self.ALLOWED_TYPES)
-            is_valid_ext = ext in self.ALLOWED_EXTS
-
-            if not (is_valid_type or is_valid_ext):
-                logger.error(f"[AvatarUpload] Invalid file type rejected: content_type={content_type}, ext={ext}")
-                return Response({
-                    "error": f"File type '{content_type}' is not allowed. Accepted: JPG, JPEG, PNG, WEBP."
-                }, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+            # Log incoming file details
+            logger.info(f"[AvatarUpload] Processing upload: name={file.name}, size={file.size}, type={content_type}")
 
             # Validate size
             if file.size > self.MAX_SIZE_BYTES:
-                logger.error(f"[AvatarUpload] File size exceeds 5MB limit: {file.size} bytes")
+                logger.error(f"[AvatarUpload] File size exceeds limit: {file.size} bytes")
                 return Response({
-                    "error": f"File too large ({round(file.size / 1024 / 1024, 1)} MB). Maximum allowed: 5 MB."
+                    "error": f"File too large ({round(file.size / 1024 / 1024, 1)} MB). Maximum allowed: 10 MB."
                 }, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
 
             # Build unique filename
-            final_ext = ext if ext in self.ALLOWED_EXTS else 'jpg'
+            final_ext = ext if ext in {'jpg', 'jpeg', 'png', 'webp', 'gif'} else 'jpg'
             filename = f"{uuid.uuid4()}.{final_ext}"
 
             # Ensure directory exists

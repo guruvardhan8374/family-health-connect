@@ -30,10 +30,12 @@ class UserProfileSettingsSerializer(serializers.ModelSerializer):
 
     def to_internal_value(self, data):
         mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
-        if 'date_of_birth' in mutable_data:
-            val = mutable_data['date_of_birth']
-            if val == '' or val is None:
-                mutable_data['date_of_birth'] = None
+        optional_fields = ['date_of_birth', 'profile_picture', 'phone_number', 'bio', 'emergency_contact', 'emergency_phone', 'gender', 'blood_group', 'address']
+        for field in optional_fields:
+            if field in mutable_data:
+                val = mutable_data[field]
+                if val == '' or val is None or val == 'null':
+                    mutable_data[field] = None if field == 'date_of_birth' else ''
         return super().to_internal_value(mutable_data)
 
     def update(self, instance, validated_data):

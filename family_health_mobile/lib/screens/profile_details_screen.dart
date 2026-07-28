@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 
 class ProfileDetailsScreen extends StatefulWidget {
   const ProfileDetailsScreen({super.key});
@@ -113,14 +114,27 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         fileName,
         filePath: _localImagePath,
       );
-      if (uploadRes != null && uploadRes['profile_picture'] != null) {
-        _picController.text = uploadRes['profile_picture'].toString();
+      final bool isSuccess = uploadRes != null && 
+          (uploadRes['success'] == true || uploadRes['status_code'] == 200 || uploadRes['status_code'] == 201 || uploadRes['profile_picture'] != null);
+
+      if (isSuccess && uploadRes['profile_picture'] != null) {
+        final String newUrl = uploadRes['profile_picture'].toString();
+        _picController.text = newUrl;
+        await AuthService.saveProfilePicture(newUrl);
+
+        // Refresh UI state by clearing local temporary selection so NetworkImage renders
+        setState(() {
+          _localImageBytes = null;
+          _localImageName = null;
+          _localImagePath = null;
+        });
       } else {
+        final String actualError = uploadRes?['error']?.toString() ?? 'Failed to upload profile picture';
         setState(() => _isSaving = false);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('❌ Failed to upload profile picture.'),
+            SnackBar(
+              content: Text('❌ $actualError'),
               backgroundColor: Colors.red,
               behavior: SnackBarBehavior.floating,
             ),

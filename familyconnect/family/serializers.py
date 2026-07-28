@@ -24,15 +24,48 @@ class FamilyMembershipSerializer(serializers.ModelSerializer):
 
     def get_latest_health_record(self, obj):
         try:
-            from family_health_records_app.models import HealthRecord
-            record = HealthRecord.objects.filter(user=obj.user).order_by('-recorded_date', '-created_at').first()
-            if record:
+            hr = None
+            steps = None
+            spo2 = None
+            sleep = None
+            recorded_date = None
+
+            # 1. Check HealthSnapshot (where mobile Health Connect & Google Fit syncs live)
+            from health.models import HealthSnapshot
+            snapshot = HealthSnapshot.objects.filter(user=obj.user).order_by('-recorded_at').first()
+            if snapshot:
+                hr = snapshot.heart_rate
+                steps = snapshot.steps
+                spo2 = snapshot.spo2
+                sleep = snapshot.sleep_hours
+                recorded_date = snapshot.recorded_at.isoformat() if snapshot.recorded_at else None
+
+            # 2. Check HealthRecord (fallback / manual records app)
+            try:
+                from family_health_records_app.models import HealthRecord
+                record = HealthRecord.objects.filter(user=obj.user).order_by('-recorded_date', '-created_at').first()
+                if record:
+                    if hr is None or hr == 0:
+                        hr = record.heart_rate
+                    if steps is None or steps == 0:
+                        steps = record.steps
+                    if spo2 is None or spo2 == 0:
+                        spo2 = record.oxygen_level
+                    if sleep is None or sleep == 0:
+                        sleep = record.sleep_hours
+                    if not recorded_date and record.recorded_date:
+                        recorded_date = record.recorded_date.isoformat()
+            except Exception:
+                pass
+
+            if hr is not None or steps is not None or spo2 is not None or sleep is not None:
                 return {
-                    'heart_rate': record.heart_rate,
-                    'steps': record.steps,
-                    'oxygen_level': record.oxygen_level,
-                    'sleep_hours': record.sleep_hours,
-                    'recorded_date': record.recorded_date.isoformat() if record.recorded_date else None,
+                    'heart_rate': hr or 0,
+                    'steps': steps or 0,
+                    'oxygen_level': spo2 or 0.0,
+                    'spo2': spo2 or 0.0,
+                    'sleep_hours': sleep or 0.0,
+                    'recorded_date': recorded_date,
                 }
         except Exception:
             pass

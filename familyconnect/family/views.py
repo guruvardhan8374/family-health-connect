@@ -20,6 +20,23 @@ class FamilyGroupViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = None
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Ensure only creator or admin can delete the family circle
+        is_creator = instance.created_by == request.user
+        is_admin = FamilyMembership.objects.filter(
+            user=request.user, family_group=instance, is_admin=True, is_approved=True
+        ).exists()
+        if not (is_creator or is_admin):
+            return Response({'error': 'Only the Circle Creator or Admin can delete this family circle.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Delete linked conversations
+        from chat.models import Conversation
+        Conversation.objects.filter(family_group=instance).delete()
+        
+        self.perform_destroy(instance)
+        return Response({'success': True, 'message': 'Family circle deleted successfully.'}, status=status.HTTP_200_OK)
+
     def get_serializer_class(self):
         if self.action in ['retrieve', 'update', 'partial_update']:
             return FamilyGroupDetailSerializer

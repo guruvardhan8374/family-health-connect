@@ -1,14 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  Send, Video, Loader2, MoreVertical, Paperclip, 
-  Search, Phone, Smile, Mic, Pin, Archive, Trash2,
+  Send, Loader2, MoreVertical, Paperclip, 
+  Search, Smile, Mic, Pin, Archive, Trash2,
   Check, CheckCheck, X, Plus, Users, User
 } from 'lucide-react';
 import api from '../utils/api';
 import MessageBubble from '../components/chat/MessageBubble';
 import AttachmentMenu from '../components/chat/AttachmentMenu';
-import CallOverlay from '../components/chat/CallOverlay';
-import StoryBar from '../components/chat/StoryBar';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Chat() {
@@ -30,53 +28,68 @@ export default function Chat() {
   const [checkingFamily, setCheckingFamily] = useState(true);
   const [hasFamily, setHasFamily] = useState(false);
 
-  // Stories State
-  const [stories, setStories] = useState([]);
-  const [activeStory, setActiveStory] = useState(null);
-
   // New Chat States
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [familyMembers, setFamilyMembers] = useState([]);
   const [familyGroups, setFamilyGroups] = useState([]);
 
-  // Call States
-  const [callActive, setCallActive] = useState(false);
-  const [isIncoming, setIsIncoming] = useState(false);
-  const [callType, setCallType] = useState('VIDEO');
-  const [callerName, setCallerName] = useState('');
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
-  const [remoteSid, setRemoteSid] = useState(null);
-  const [pendingOffer, setPendingOffer] = useState(null);
-  
   const socketRef = useRef(null);
   const scrollRef = useRef(null);
-  const pcRef = useRef(null);
-
-  const fetchStories = useCallback(async () => {
-    try {
-      const res = await api.get('/chat/stories/');
-      setStories(res.data.results || res.data || []);
-    } catch (err) { console.error(err); }
-  }, []);
 
   const fetchConvs = useCallback(async () => {
     try {
       const res = await api.get('/chat/conversations/');
       const convList = res.data.results || res.data || [];
       setConversations(convList);
-      if (!activeConv && convList.length > 0) setActiveConv(convList[0]);
+
+      const params = new URLSearchParams(window.location.search);
+      const paramFamilyId = params.get('family_group_id') || params.get('group_id') || localStorage.getItem('active_family_group_id');
+      const paramUserId = params.get('user_id');
+
+      if (paramUserId) {
+        try {
+          const privRes = await api.post('/chat/conversations/private/', { recipient_id: parseInt(paramUserId) });
+          if (privRes.data) {
+            setActiveConv(privRes.data);
+            return;
+          }
+        } catch (e) {
+          console.error('Failed to get/create private conv:', e);
+        }
+      }
+
+      if (paramFamilyId) {
+        const matchingGroupConv = convList.find(c => c.family_group === parseInt(paramFamilyId) || c.family_group?.id === parseInt(paramFamilyId));
+        if (matchingGroupConv) {
+          setActiveConv(matchingGroupConv);
+          return;
+        } else {
+          try {
+            const groupConvRes = await api.get(`/chat/conversations/by-family/?family_group_id=${paramFamilyId}`);
+            if (groupConvRes.data) {
+              setActiveConv(groupConvRes.data);
+              setConversations(prev => [groupConvRes.data, ...prev.filter(c => c.id !== groupConvRes.data.id)]);
+              return;
+            }
+          } catch (e) {
+            console.error('Failed to get/create family group conv:', e);
+          }
+        }
+      }
+
+      setActiveConv(prev => prev || (convList.length > 0 ? convList[0] : null));
     } catch (err) { console.error(err); }
-  }, [activeConv]);
+  }, []);
 
   const updateConvList = useCallback((msg) => {
     setConversations(prev => prev.map(c => c.id === msg.conversation ? { ...c, latest_message: msg } : c));
   }, []);
 
-  const fetchMessages = useCallback(async (silent = false) => {
+  const fetchMessages = useCallback(async (convId, silent = false) => {
+    if (!convId) return;
     if (!silent) setLoading(true);
     try {
-      const res = await api.get(`/chat/messages/?conversation=${activeConv.id}`);
+      const res = await api.get(`/chat/messages/?conversation=${convId}`);
       const msgs = res.data.results || res.data || [];
       const reversed = msgs.slice().reverse();
       
@@ -87,13 +100,13 @@ export default function Chat() {
         return reversed;
       });
       
-      api.post('/chat/messages/mark-read/', { conversation: activeConv.id }).catch(err => console.error(err));
+      api.post('/chat/messages/mark-read/', { conversation: convId }).catch(err => console.error(err));
     } catch (err) { 
       console.error(err); 
     } finally { 
       if (!silent) setLoading(false); 
     }
-  }, [activeConv]);
+  }, []);
 
   // Verify family membership first on mount, and then fetch details
   useEffect(() => {
@@ -106,7 +119,6 @@ export default function Chat() {
         } else {
           setHasFamily(true);
           await fetchConvs();
-          await fetchStories();
         }
       } catch (err) {
         console.error("Failed to verify family circle status:", err);
@@ -118,7 +130,14 @@ export default function Chat() {
       }
     };
     checkFamilyAndInit();
-  }, [fetchConvs, fetchStories]);
+  }, []);
+
+  // Fetch messages when activeConv changes
+  useEffect(() => {
+    if (activeConv?.id) {
+      fetchMessages(activeConv.id);
+    }
+  }, [activeConv?.id, fetchMessages]);
 
   // Establish real-time WebSocket connection to Django Channels ASGI on activeConv change
   useEffect(() => {
@@ -416,46 +435,8 @@ export default function Chat() {
 
   return (
     <div className="h-screen md:h-[calc(100vh-120px)] flex bg-white/50 md:backdrop-blur-xl md:rounded-[3rem] md:border border-white/20 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-500">
-      {callActive && (
-        <CallOverlay 
-          localStream={localStream}
-          remoteStream={remoteStream}
-          isIncoming={isIncoming}
-          callerName={callerName}
-          callType={callType}
-          onAccept={acceptCall}
-          onReject={endCall}
-          onEnd={endCall}
-        />
-      )}
-
-      {activeStory && (
-        <div className="fixed inset-0 z-[150] bg-black/95 flex flex-col items-center justify-center animate-in zoom-in duration-300">
-          <button onClick={() => setActiveStory(null)} className="absolute top-8 right-8 text-white hover:scale-125 transition-all"><X className="w-8 h-8" /></button>
-          <div className="w-full max-w-lg aspect-[9/16] relative bg-navy-900 rounded-[2rem] overflow-hidden shadow-2xl">
-            <div className="absolute top-0 left-0 w-full p-6 bg-gradient-to-b from-black/50 to-transparent flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <img src={activeStory.profile_picture || 'https://i.pravatar.cc/150'} className="w-10 h-10 rounded-xl border-2 border-brand-500" />
-                <span className="text-white font-black">{activeStory.username}</span>
-              </div>
-              <span className="text-white/60 text-xs font-bold uppercase tracking-widest">{new Date(activeStory.created_at).toLocaleTimeString()}</span>
-            </div>
-            <img src={activeStory.media_url} className="w-full h-full object-cover" />
-            <div className="absolute bottom-0 left-0 w-full p-12 bg-gradient-to-t from-black/50 to-transparent">
-              <p className="text-white text-lg font-medium">{activeStory.content}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Sidebar - Hidden on mobile if chat is active */}
       <div className={`${activeConv ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] border-r border-navy-100/50 flex-col bg-white/40 backdrop-blur-md`}>
-        <StoryBar 
-          stories={stories} 
-          onAddStory={handleAddStory} 
-          onViewStory={setActiveStory} 
-        />
-        
         <div className="p-6 space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-black text-navy-900">Chats</h2>
@@ -537,14 +518,26 @@ export default function Chat() {
                   </div>
                 </div>
               </div>
-              <div className="flex items-center space-x-1 md:space-x-2">
-                <button onClick={() => initiateCall('VOICE')} className="p-2 md:p-3 bg-white hover:bg-navy-50 text-navy-600 rounded-xl md:rounded-2xl transition-all shadow-sm border border-navy-100"><Phone className="w-4 h-4 md:w-5 md:h-5" /></button>
-                <button onClick={() => initiateCall('VIDEO')} className="p-2 md:p-3 bg-white hover:bg-navy-50 text-brand-600 rounded-xl md:rounded-2xl transition-all shadow-sm border border-navy-100"><Video className="w-4 h-4 md:w-5 md:h-5" /></button>
-              </div>
             </header>
 
             <main className="flex-1 overflow-y-auto p-8 space-y-6">
-              {loading ? <Loader2 className="w-8 h-8 text-brand-500 animate-spin mx-auto mt-20" /> : messages.map((msg, i) => <MessageBubble key={msg.id || i} msg={msg} isMe={msg.sender === currentUser.id} />)}
+              {loading ? <Loader2 className="w-8 h-8 text-brand-500 animate-spin mx-auto mt-20" /> : messages.map((msg, i) => (
+                <MessageBubble 
+                  key={msg.id || i} 
+                  msg={msg} 
+                  isMe={msg.sender === currentUser.id} 
+                  onDelete={async (id) => {
+                    if (!window.confirm("Delete this message?")) return;
+                    try {
+                      await api.delete(`/chat/messages/${id}/`);
+                      setMessages(prev => prev.filter(m => m.id !== id));
+                    } catch (err) {
+                      console.error(err);
+                      alert("Failed to delete message.");
+                    }
+                  }}
+                />
+              ))}
               <div ref={scrollRef} />
             </main>
 

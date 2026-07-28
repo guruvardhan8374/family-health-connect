@@ -271,13 +271,10 @@ class _LoginScreenState extends State<LoginScreen> {
       debugPrint('=== [GoogleSignIn EXCEPTION CAUGHT] ===');
       debugPrint('Type: ${e.runtimeType}');
       debugPrint('Details: $e');
-      debugPrint('Stack Trace:\n$stackTrace');
       debugPrint('=====================================================');
 
-      setState(() {
-        _error = 'Google Sign-In failed: $e';
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
+      _showGoogleEmailFallbackDialog();
     }
   }
 

@@ -24,12 +24,32 @@ class ConversationViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
-        # Annotate with last message timestamp to sort active chats to top
-        return Conversation.objects.filter(
+        qs = Conversation.objects.filter(
             participants=self.request.user
         ).select_related('family_group').prefetch_related('participants', 'userconversation_set__user').annotate(
             last_message_time=Max('messages__timestamp')
-        ).order_by('-last_message_time', '-created_at')
+        )
+        family_group_id = self.request.query_params.get('family_group_id') or self.request.query_params.get('group_id')
+        if family_group_id:
+            qs = qs.filter(family_group_id=family_group_id)
+        return qs.order_by('-last_message_time', '-created_at')
+
+    @action(detail=False, methods=['get', 'post'], url_path='by-family')
+    def get_or_create_by_family(self, request):
+        family_group_id = request.query_params.get('family_group_id') or request.data.get('family_group_id')
+        if not family_group_id:
+            return Response({"error": "family_group_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            group = FamilyGroup.objects.get(id=family_group_id)
+        except FamilyGroup.DoesNotExist:
+            return Response({"error": "Family group not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        is_member = FamilyMembership.objects.filter(user=request.user, family_group=group, is_approved=True).exists()
+        if not is_member:
+            return Response({"error": "Not a member of this family group"}, status=status.HTTP_403_FORBIDDEN)
+        
+        conversation = create_family_group_chat(group)
+        return Response(ConversationSerializer(conversation, context={'request': request}).data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='private')
     def create_private_conversation(self, request):
@@ -37,6 +57,15 @@ class ConversationViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         recipient_id = serializer.validated_data['recipient_id']
+        if recipient_id == request.user.id:
+            from users.views import get_family_info_for_user
+            family_info = get_family_info_for_user(request.user)
+            if family_info['has_family'] and family_info['family_id']:
+                group = FamilyGroup.objects.get(id=family_info['family_id'])
+                conversation = create_family_group_chat(group)
+                return Response(ConversationSerializer(conversation, context={'request': request}).data, status=status.HTTP_200_OK)
+            return Response({"error": "Cannot create a private conversation with yourself"}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             recipient = CustomUser.objects.get(id=recipient_id)
         except CustomUser.DoesNotExist:
@@ -101,14 +130,39 @@ class MessageViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
+        qs = Message.objects.filter(conversation__participants=self.request.user)
         conversation_id = self.request.query_params.get('conversation')
         if conversation_id:
-            # Check if user is participant of conversation_id
-            is_member = UserConversation.objects.filter(user=self.request.user, conversation_id=conversation_id).exists()
-            if not is_member:
-                return Message.objects.none()
-            return Message.objects.filter(conversation_id=conversation_id).order_by('-timestamp')
-        return Message.objects.none()
+            qs = qs.filter(conversation_id=conversation_id)
+        return qs.order_by('-timestamp')
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Allow sender or participant to delete message
+        if instance.sender != request.user:
+            # Check if user is conversation participant
+            is_participant = UserConversation.objects.filter(user=request.user, conversation=instance.conversation).exists()
+            if not is_participant:
+                return Response({'error': 'You do not have permission to delete this message.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        message_id = instance.id
+        conv_id = instance.conversation.id
+        self.perform_destroy(instance)
+        
+        # Broadcast deletion if Channel Layer active
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"chat_{conv_id}",
+                    {'type': 'chat_message_delete', 'id': message_id}
+                )
+        except Exception:
+            pass
+
+        return Response({'success': True, 'message': 'Message deleted successfully.'}, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
         message = serializer.save(sender=self.request.user)

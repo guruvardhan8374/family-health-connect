@@ -475,6 +475,35 @@ class ApiService {
     return res != null;
   }
 
+  static Future<bool> deleteMessage(int messageId) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/chat/messages/$messageId/'),
+        headers: await _getHeaders(),
+      );
+      return response.statusCode == 200 || response.statusCode == 204;
+    } catch (e) {
+      debugPrint('[ApiService] Error deleting message: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> deleteFamilyGroup(int groupId) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/family/groups/$groupId/'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        _cachedFamilyGroups = null;
+        return true;
+      }
+    } catch (e) {
+      debugPrint('[ApiService] Error deleting family circle: $e');
+    }
+    return false;
+  }
+
   /// Gets or creates a family group conversation. Returns the conversation data map or null on failure.
   static Future<Map<String, dynamic>?> getOrCreateFamilyGroupChat(int groupId, String groupName) async {
     try {
@@ -488,7 +517,25 @@ class ApiService {
         if (data is Map<String, dynamic>) return data;
       }
     } catch (e) {
-      debugPrint('[ApiService] getOrCreateFamilyGroupChat error: $e');
+      debugPrint('[ApiService] Error creating family group chat: $e');
+    }
+    return null;
+  }
+
+  /// Gets or creates a 1:1 private conversation with another user.
+  static Future<Map<String, dynamic>?> getOrCreatePrivateConversation(int recipientId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/chat/conversations/private/'),
+        headers: await _getHeaders(),
+        body: jsonEncode({'recipient_id': recipientId}),
+      );
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        if (data is Map<String, dynamic>) return data;
+      }
+    } catch (e) {
+      debugPrint('[ApiService] Error creating private conversation: $e');
     }
     return null;
   }
@@ -623,44 +670,62 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>?> uploadAvatarBytes(List<int> bytes, String filename, {String? filePath}) async {
-    final String lowerName = filename.toLowerCase();
+    String safeFilename = filename;
+    if (!safeFilename.contains('.')) {
+      safeFilename = '$safeFilename.jpg';
+    } else {
+      final ext = safeFilename.split('.').last.toLowerCase();
+      if (ext == 'tmp' || ext == 'raw' || ext == 'bin' || ext.isEmpty) {
+        safeFilename = '${safeFilename.split('.').first}.jpg';
+      }
+    }
+
+    final String lowerName = safeFilename.toLowerCase();
     String subType = 'jpeg';
     if (lowerName.endsWith('.png')) {
       subType = 'png';
     } else if (lowerName.endsWith('.webp')) {
       subType = 'webp';
-    } else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
-      subType = 'jpeg';
     }
 
     final mediaType = MediaType('image', subType);
+    final bool fileExistsOnDisk = filePath != null && filePath.isNotEmpty && File(filePath).existsSync();
 
-    debugPrint('=====================================================');
-    debugPrint('[AvatarUpload] Starting Avatar Upload');
-    debugPrint('[AvatarUpload] Selected filename: $filename');
-    if (filePath != null) debugPrint('[AvatarUpload] Local file path: $filePath');
-    debugPrint('[AvatarUpload] Image size: ${bytes.length} bytes (${(bytes.length / 1024).toStringAsFixed(1)} KB)');
-    debugPrint('[AvatarUpload] Target Content-Type: ${mediaType.mimeType}');
+    debugPrint('==================== [AVATAR UPLOAD PRE-CHECK] ====================');
+    debugPrint('Selected Image Path: ${filePath ?? "Memory bytes (no local path)"}');
+    debugPrint('File Exists: $fileExistsOnDisk');
+    debugPrint('File Size: ${bytes.length} bytes (${(bytes.length / 1024).toStringAsFixed(1)} KB)');
+    debugPrint('Final Filename: $safeFilename');
+    debugPrint('Media Content-Type: ${mediaType.mimeType}');
+    debugPrint('==================================================================');
 
     Future<http.StreamedResponse> sendRequest(String? currentToken) async {
       final uri = Uri.parse('$baseUrl/users/avatar/');
-      debugPrint('[AvatarUpload] Endpoint URL: $uri');
-      debugPrint('[AvatarUpload] Request Headers: {Bypass-Tunnel-Reminder: true, Authorization: Bearer ${currentToken != null && currentToken.isNotEmpty ? "***PRESENT***" : "NONE"}}');
-
       final request = http.MultipartRequest('POST', uri);
       request.headers.addAll({
         'Bypass-Tunnel-Reminder': 'true',
         if (currentToken != null && currentToken.isNotEmpty) 'Authorization': 'Bearer $currentToken',
       });
 
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'avatar',
-          bytes,
-          filename: filename,
-          contentType: mediaType,
-        ),
-      );
+      if (fileExistsOnDisk) {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'avatar',
+            filePath!,
+            filename: safeFilename,
+            contentType: mediaType,
+          ),
+        );
+      } else {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'avatar',
+            bytes,
+            filename: safeFilename,
+            contentType: mediaType,
+          ),
+        );
+      }
       return await request.send().timeout(const Duration(seconds: 30));
     }
 
@@ -674,28 +739,62 @@ class ApiService {
         final refreshed = await refreshJwtToken();
         if (refreshed) {
           token = await _getToken();
-          debugPrint('[AvatarUpload] Token refreshed successfully — Retrying upload...');
+          debugPrint('[AvatarUpload] Token refreshed — Retrying upload...');
           response = await sendRequest(token);
         }
       }
 
       final body = await response.stream.bytesToString();
-      debugPrint('[AvatarUpload] Response Status Code: ${response.statusCode}');
-      debugPrint('[AvatarUpload] Response Body: $body');
-      debugPrint('=====================================================');
+
+      debugPrint('==================== [AVATAR UPLOAD POST-CHECK] ====================');
+      debugPrint('Request URL: $baseUrl/users/avatar/');
+      debugPrint('HTTP Method: POST');
+      debugPrint('HTTP Status Code: ${response.statusCode}');
+      debugPrint('Response Headers: ${response.headers}');
+      debugPrint('Complete Response Body: $body');
+      debugPrint('===================================================================');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return jsonDecode(body) as Map<String, dynamic>;
+        final decoded = jsonDecode(body);
+        if (decoded is Map<String, dynamic>) {
+          decoded['success'] = true;
+          return decoded;
+        }
+        return {'success': true, 'profile_picture': decoded.toString()};
       } else {
-        debugPrint('[AvatarUpload ERROR] Server returned failure status: ${response.statusCode}');
-        return null;
+        String errorMsg = 'Server returned HTTP ${response.statusCode}';
+        try {
+          final decoded = jsonDecode(body);
+          if (decoded is Map<String, dynamic>) {
+            if (decoded.containsKey('detail')) {
+              errorMsg = decoded['detail'].toString();
+            } else if (decoded.containsKey('error')) {
+              errorMsg = decoded['error'].toString();
+            } else if (decoded.containsKey('message')) {
+              errorMsg = decoded['message'].toString();
+            } else if (decoded.containsKey('avatar')) {
+              final av = decoded['avatar'];
+              errorMsg = av is List ? av.join(', ') : av.toString();
+            } else {
+              errorMsg = decoded.entries.map((e) => '${e.key}: ${e.value}').join('; ');
+            }
+          } else {
+            errorMsg = body;
+          }
+        } catch (_) {
+          errorMsg = body.isNotEmpty ? body : errorMsg;
+        }
+
+        debugPrint('[AvatarUpload ERROR] Extracted backend error: $errorMsg');
+        return {'success': false, 'error': errorMsg};
       }
     } catch (e, stack) {
-      debugPrint('=====================================================');
-      debugPrint('[AvatarUpload EXCEPTION] $e');
+      debugPrint('==================== [AVATAR UPLOAD EXCEPTION] ====================');
+      debugPrint('Exception Type: ${e.runtimeType}');
+      debugPrint('Exception Message: $e');
       debugPrint('Stack Trace:\n$stack');
-      debugPrint('=====================================================');
-      return null;
+      debugPrint('===================================================================');
+      return {'success': false, 'error': 'Exception (${e.runtimeType}): $e'};
     }
   }
 

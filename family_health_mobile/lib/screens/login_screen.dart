@@ -242,12 +242,16 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _handleGoogleSignIn() async {
     setState(() { _isLoading = true; _error = null; });
     try {
-      final GoogleSignIn googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
-      debugPrint('=== [GoogleSignIn STEP 1] Calling googleSignIn.signIn() ... ===');
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        serverClientId: '663207086705-10sr7anciih8v9bvps0c0los21o0ul7s.apps.googleusercontent.com',
+        scopes: ['email', 'profile'],
+      );
+      debugPrint('=== [GoogleSignIn STEP 1] Initializing GoogleSignIn ... ===');
 
-      // Force account chooser to always appear
-      await googleSignIn.signOut();
-      await googleSignIn.disconnect().catchError((_) => null);
+      // Clear previous cached session safely without breaking disconnect call
+      try {
+        await googleSignIn.signOut();
+      } catch (_) {}
 
       final GoogleSignInAccount? account = await googleSignIn.signIn();
 
@@ -262,7 +266,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final GoogleSignInAuthentication auth = await account.authentication;
 
       debugPrint('=== [GoogleSignIn STEP 3 RESULT] accessToken null? ${auth.accessToken == null}, idToken null? ${auth.idToken == null} ===');
-      final idToken = auth.idToken ?? '';
+      final idToken = auth.idToken ?? auth.accessToken ?? '';
       debugPrint('=== [GoogleSignIn STEP 4] Calling ApiService.googleLogin with email: ${account.email} ... ===');
 
       await _completeGoogleAuth(account.email, account.displayName ?? '', idToken);
@@ -271,10 +275,18 @@ class _LoginScreenState extends State<LoginScreen> {
       debugPrint('=== [GoogleSignIn EXCEPTION CAUGHT] ===');
       debugPrint('Type: ${e.runtimeType}');
       debugPrint('Details: $e');
+      debugPrint('$stackTrace');
       debugPrint('=====================================================');
 
       setState(() => _isLoading = false);
-      _showGoogleEmailFallbackDialog();
+
+      final errStr = e.toString();
+      String? userHint;
+      if (errStr.contains('10') || errStr.contains('DEVELOPER_ERROR') || errStr.contains('ApiException: 10')) {
+        userHint = 'Google Sign-In configuration (SHA-1 fingerprint) is required on Firebase. You can continue instantly using your Google email below:';
+      }
+
+      _showGoogleEmailFallbackDialog(reason: userHint);
     }
   }
 
@@ -313,7 +325,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _showGoogleEmailFallbackDialog() {
+  void _showGoogleEmailFallbackDialog({String? reason}) {
     final emailController = TextEditingController();
     showModalBottomSheet(
       context: context,
@@ -349,20 +361,45 @@ class _LoginScreenState extends State<LoginScreen> {
                             fontSize: 22)),
                   ),
                   const SizedBox(width: 14),
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Google Sign-In',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold)),
-                      Text('Enter your Google Account email',
-                          style: TextStyle(color: Colors.white54, fontSize: 13)),
-                    ],
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Google Sign-In',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold)),
+                        Text('Enter your Google Account email',
+                            style: TextStyle(color: Colors.white54, fontSize: 13)),
+                      ],
+                    ),
                   ),
                 ],
               ),
+              if (reason != null && reason.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0EA5E9).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF0EA5E9).withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Color(0xFF38BDF8), size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          reason,
+                          style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               TextField(
                 controller: emailController,

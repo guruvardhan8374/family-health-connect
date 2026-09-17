@@ -58,6 +58,7 @@ urlpatterns = [
     path('api/v1/settings/', include('settings_app.urls')),
     path('api/v1/', include('family_health_records_app.urls')),
     path('api/v1/sync/', include('sync.urls')),
+    path('api/v1/medicines/', include('medicines.urls')),
 ]
 from django.conf import settings
 from django.conf.urls.static import static

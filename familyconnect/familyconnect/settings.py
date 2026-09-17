@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     'family_health_records_app',
     'settings_app',
     'sync',
+    'medicines',
 ]
 
 MIDDLEWARE = [

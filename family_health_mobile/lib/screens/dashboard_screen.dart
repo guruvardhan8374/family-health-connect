@@ -11,6 +11,7 @@ import '../services/translation_service.dart';
 import 'settings_screen.dart';
 import 'live_location_screen.dart';
 import 'notifications_screen.dart';
+import 'medicine_reminder_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -351,7 +352,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 delegate: SliverChildListDelegate([
                   // Family Map Button
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 20),
+                    padding: const EdgeInsets.only(bottom: 14),
                     child: SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
@@ -365,6 +366,89 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         onPressed: () {
                           Navigator.push(context, MaterialPageRoute(builder: (_) => const LiveLocationScreen()));
                         },
+                      ),
+                    ),
+                  ),
+
+                  // Medicine Reminders Card
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 20),
+                    child: GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const MedicineReminderScreen()),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: isDark
+                                ? [const Color(0xFF134E4A), const Color(0xFF0F172A)]
+                                : [const Color(0xFF0D9488), const Color(0xFF14B8A6)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF14B8A6).withValues(alpha: 0.35),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: const Icon(Icons.medication_rounded, color: Colors.white, size: 28),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Medicine Reminders',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Schedule doses, track today & get alerts',
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.85),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Text(
+                                'Manage',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),

@@ -6,6 +6,7 @@ import '../services/health_service.dart';
 import '../services/health_sync_service.dart';
 import 'package:health/health.dart';
 import 'package:flutter/foundation.dart';
+import 'medicine_reminder_screen.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -59,6 +60,9 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
   double _hydrationGoal = 2.0;
   double _sleepGoal = 8.0;
   double _distanceGoal = 5.0;
+
+  int _medTotal = 0;
+  int _medTaken = 0;
 
   StreamSubscription? _syncSubscription;
   Timer? _pollingTimer;
@@ -506,16 +510,23 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
       ApiService.getHealthData(),
       ApiService.getHealthSummary(range: 'daily'),
       ApiService.getTodayHealthSummary(),
+      ApiService.getTodayMedicines(),
     ]);
 
     final records     = results[0] as List<dynamic>;
     final summary     = results[1] as Map<String, dynamic>?;
     final todaySummary = results[2] as Map<String, dynamic>?;
+    final todayMeds   = results[3] as Map<String, dynamic>?;
 
     if (mounted) {
       setState(() {
         _records  = records;
         _isLoading = false;
+
+        if (todayMeds != null) {
+          _medTotal = todayMeds['total_doses'] as int? ?? 0;
+          _medTaken = todayMeds['taken_doses'] as int? ?? 0;
+        }
 
         if (todaySummary != null) {
           if (_steps == '--' || _steps == '0') _steps = (todaySummary['steps'] ?? 'No Data Available').toString();
@@ -918,6 +929,97 @@ class _HealthScreenState extends State<HealthScreen> with WidgetsBindingObserver
                     onPressed: () async {
                       await _handlePermissionRequestFlow();
                     },
+                  ),
+                ),
+
+                // Medicine Reminders Oceanic Glass Card
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const MedicineReminderScreen()),
+                    ).then((_) => _fetchData());
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: Theme.of(context).brightness == Brightness.dark
+                            ? [const Color(0xFF134E4A), const Color(0xFF0F172A)]
+                            : [const Color(0xFF0D9488), const Color(0xFF14B8A6)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF14B8A6).withValues(alpha: 0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Icon(Icons.medication_rounded, color: Colors.white, size: 28),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Medicine Reminders',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _medTotal > 0
+                                    ? '$_medTaken of $_medTotal doses taken today'
+                                    : 'Manage daily doses & scheduled reminders',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.85),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Text(
+                                'Open',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              SizedBox(width: 4),
+                              Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 12),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 if (_isAndroid && _healthConnectStatus != null && _healthConnectStatus != HealthConnectSdkStatus.sdkAvailable)

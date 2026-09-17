@@ -1354,6 +1354,121 @@ class ApiService {
       return [];
     }
   }
+
+  // ─── MEDICINE REMINDER APIS ────────────────────────────────────────────────
+
+  /// Fetches all medicines for the authenticated user
+  static Future<List<dynamic>> getMedicines() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/medicines/'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          return decoded;
+        } else if (decoded is Map && decoded['results'] is List) {
+          return decoded['results'] as List<dynamic>;
+        }
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Fetches today's scheduled medicine doses and statuses (Upcoming, Taken, Missed)
+  static Future<Map<String, dynamic>?> getTodayMedicines() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/medicines/today/'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Creates a new medicine entry
+  static Future<Map<String, dynamic>?> createMedicine(Map<String, dynamic> data) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/medicines/'),
+        headers: headers,
+        body: jsonEncode(data),
+      );
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Updates an existing medicine entry
+  static Future<Map<String, dynamic>?> updateMedicine(int id, Map<String, dynamic> data) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.patch(
+        Uri.parse('$baseUrl/medicines/$id/'),
+        headers: headers,
+        body: jsonEncode(data),
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Deletes a medicine entry
+  static Future<bool> deleteMedicine(int id) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/medicines/$id/'),
+        headers: headers,
+      );
+      return response.statusCode == 204 || response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Marks a specific scheduled dose as taken (stores timestamp and prevents duplicates)
+  static Future<Map<String, dynamic>?> markMedicineTaken(int medicineId, String doseTime, {String? scheduledDate}) async {
+    try {
+      final headers = await _getHeaders();
+      final payload = <String, dynamic>{
+        'dose_time': doseTime,
+      };
+      if (scheduledDate != null) {
+        payload['scheduled_date'] = scheduledDate;
+      }
+      final response = await http.post(
+        Uri.parse('$baseUrl/medicines/$medicineId/taken/'),
+        headers: headers,
+        body: jsonEncode(payload),
+      );
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
 }
 
 

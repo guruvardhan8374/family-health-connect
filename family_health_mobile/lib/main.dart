@@ -20,6 +20,8 @@ import 'services/health_service.dart';
 import 'services/app_config.dart';
 import 'services/translation_service.dart';
 import 'services/firebase_options.dart';
+import 'services/medicine_notification_service.dart';
+import 'screens/medicine_reminder_screen.dart';
 
 class ThemeController {
   static final ThemeController instance = ThemeController._internal();
@@ -126,6 +128,8 @@ class ThemeController {
   }
 }
 
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
@@ -142,6 +146,18 @@ void main() async {
   await TranslationService.instance.init();
   await OfflineQueueService.instance.init();
   await ThemeController.instance.loadTheme();
+
+  // Initialize medicine reminder local notifications
+  await MedicineNotificationService.instance.init(
+    onTap: (payload) {
+      if (payload == 'medicine_reminders') {
+        appNavigatorKey.currentState?.push(
+          MaterialPageRoute(builder: (_) => const MedicineReminderScreen()),
+        );
+      }
+    },
+  );
+
   runApp(const FamilyHealthApp());
 }
 
@@ -160,6 +176,7 @@ class FamilyHealthApp extends StatelessWidget {
           valueListenable: ThemeController.instance.themeColor,
           builder: (context, primaryColor, child) {
             return MaterialApp(
+              navigatorKey: appNavigatorKey,
               title: 'Family Health Connect',
               debugShowCheckedModeBanner: false,
               themeMode: mode,
@@ -269,6 +286,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _listenForSOS();
     _triggerAutoHealthSync();
+    PedometerService.instance.init();
+
+    // Re-schedule and sync active medicine reminders on app start
+    ApiService.getMedicines().then((meds) {
+      MedicineNotificationService.instance.syncAllActiveReminders(meds);
+    }).catchError((_) {});
   }
 
   @override
